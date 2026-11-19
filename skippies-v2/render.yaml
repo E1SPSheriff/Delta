@@ -1,0 +1,17 @@
+# One-click deploy on Render (render.com): New > Blueprint > pick this repo.
+# A persistent disk keeps the SQLite database across deploys. Persistent disks need a paid instance type on Render.
+services:
+  - type: web
+    name: skippies
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    disk:
+      name: skippies-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_FILE
+        value: /data/skippies.db
+      - key: VAPID_SUBJECT
+        sync: false   # set to mailto:your-team-email when prompted

@@ -1,0 +1,17 @@
+{
+  "name": "SKIPPIES: BYO, recycle, hatch, battle",
+  "short_name": "Skippies",
+  "description": "BYO and recycle in real life to hatch, merge and battle eco creatures. Made for MamaShop.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1F2A24",
+  "theme_color": "#1F2A24",
+  "categories": ["games", "lifestyle", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
