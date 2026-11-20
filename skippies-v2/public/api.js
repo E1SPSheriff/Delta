@@ -22,7 +22,8 @@
       cooldown: 'Slow down: wait a minute between photos.', hash: 'Photo check failed. Try again.',
       notdetected: 'The scanner didn\u2019t spot that item. Hold it clearly in the frame and try again.',
       duplicate: 'That photo looks like one already used. Take a new photo of a new BYO or recycling moment.',
-      lowdetail: 'That photo is too dark or blank. Try again in better light.'
+      lowdetail: 'That photo is too dark or blank. Try again in better light.',
+      name: 'That name can\u2019t be used. Try another.', taken: G.NAME_ERR.taken, namecooldown: 'You can change your name once every 7 days.'
     };
 
     async function seedBots() {
@@ -68,12 +69,20 @@
 
         if (method === 'GET' && path === '/api/health') return ok({ ok: true, version: G.VERSION, mode });
         if (method === 'GET' && path === '/api/odds') return ok({ rarity: G.RARITY_KEYS.map(k => ({ key: k, name: G.RARITY[k].name, odds: G.RARITY[k].odds, effective: G.effectiveOdds()[k], species: G.EGG_POOL[G.RARITY[k].rank].map(s => s.stages[0]) })), pity: G.C.PITY_RARE, note: 'Eggs are free and earned only by real BYO or recycling. Nothing can be bought. Skippies cannot be traded or exchanged for anything of value.' });
-        if (method === 'GET' && path === '/api/names') return ok({ names: Array.from({ length: 6 }, () => G.makeName(rng)) });
+        if (method === 'GET' && path === '/api/names') return ok({ names: Array.from({ length: 6 }, () => G.makeName(rng)), min: G.NAME_MIN, max: G.NAME_MAX, cooldownDays: G.C.NAME_COOLDOWN_DAYS });
+        if (method === 'GET' && path === '/api/name-check') { // live "is this name free?" hint; the real check happens on save
+          const c = G.checkName(query.name); if (!c.ok) return ok({ ok: false, reason: c.reason, message: c.message });
+          const me = await auth(req), key = G.nameKey(c.name);
+          const taken = (await store.list('players')).some(x => !x.bot && (!me || x.id !== me.id) && G.nameKey(x.name) === key);
+          return ok(taken ? { ok: false, reason: 'taken', message: G.NAME_ERR.taken } : { ok: true, name: c.name });
+        }
         if (method === 'POST' && path === '/api/register') {
           if (body.age13 !== true) return err(403, 'age', { message: 'Online play is for ages 13+. You can still play offline on this device.' });
           const token = randomHex(32), id = 'p-' + randomHex(8);
           const p = G.newPlayer(id, now(), rng);
-          for (let i = 0; i < 5; i++) { if (!(await store.list('players')).some(x => x.friendCode === p.friendCode)) break; p.friendCode = G.makeCode(rng); }
+          const others = await store.list('players');
+          for (let i = 0; i < 5; i++) { if (!others.some(x => x.friendCode === p.friendCode)) break; p.friendCode = G.makeCode(rng); }
+          for (let i = 0; i < 10; i++) { if (!others.some(x => G.nameKey(x.name) === G.nameKey(p.name))) break; p.name = G.makeName(rng); }
           await store.put('players', id, p); await store.put('tokens', await sha256(token), { playerId: id, created: now() });
           await seedBots();
           return ok({ token, state: pub(p) });
@@ -100,7 +109,16 @@
         if (method === 'POST' && path === '/api/train') { const r = G.train(p, body.id, body.scrap); if (!r.ok) return err(400, r.reason); await save(); return ok({ result: r, state: pub(p) }); }
         if (method === 'POST' && path === '/api/team') { if (!G.setTeam(p, body.ids)) return err(400, 'team'); await save(); return ok({ state: pub(p) }); }
         if (method === 'POST' && path === '/api/buddy') { if (!p.dex[body.id]) return err(400, 'missing'); p.buddy = body.id; await save(); return ok({ state: pub(p) }); }
-        if (method === 'POST' && path === '/api/name') { if (!G.validName(body.name)) return err(400, 'name'); p.name = body.name; await save(); return ok({ state: pub(p) }); }
+        if (method === 'POST' && path === '/api/name') {
+          const c = G.checkName(body.name);
+          if (!c.ok) return err(400, 'name', { reason: c.reason, message: c.message });
+          if (c.name === p.name) return ok({ state: pub(p) }); // no change, so the weekly change is not used up
+          const next = p.nameSetAt ? p.nameSetAt + G.C.NAME_COOLDOWN_DAYS * G.DAY : 0;
+          if (next > now()) return err(403, 'namecooldown', { next, message: 'You can change your name again on ' + G.ymdOf(next) + '.' });
+          const key = G.nameKey(c.name);
+          if ((await store.list('players')).some(x => !x.bot && x.id !== p.id && G.nameKey(x.name) === key)) return err(409, 'taken', { message: G.NAME_ERR.taken });
+          p.name = c.name; p.nameSetAt = now(); await save(); return ok({ state: pub(p) });
+        }
         if (method === 'PUT' && path === '/api/zone') { if (!G.validZone(body.zone)) return err(400, 'zone'); p.zone = body.zone; await save(); return ok({ state: pub(p) }); }
         if (method === 'DELETE' && path === '/api/zone') { p.zone = null; await save(); return ok({ state: pub(p) }); }
         if (method === 'POST' && path === '/api/season/new') { if (!G.newSeason(p, now())) return err(400, 'season'); await save(); return ok({ state: pub(p) }); }
@@ -123,14 +141,20 @@
           const ticket = randomHex(12); await store.put('tickets', ticket, { playerId: p.id, kind: 'campaign', start: bt, created: now() });
           await save(); return ok({ ticket, battle: bt, state: pub(p) });
         }
-        if (method === 'POST' && (path === '/api/campaign/finish' || path === '/api/arena/finish')) {
-          const kind = path.includes('arena') ? 'arena' : 'campaign';
+        if (method === 'POST' && path === '/api/wild/start') {
+          const bt = G.startWild(p, body.litter, now(), Math.floor(rng() * 4294967295)); if (bt.error) return err(400, bt.error);
+          const ticket = randomHex(12); await store.put('tickets', ticket, { playerId: p.id, kind: 'wild', start: bt, created: now() });
+          await save(); return ok({ ticket, battle: bt, state: pub(p) });
+        }
+        if (method === 'POST' && (path === '/api/campaign/finish' || path === '/api/arena/finish' || path === '/api/wild/finish')) {
+          const kind = path.includes('arena') ? 'arena' : path.includes('wild') ? 'wild' : 'campaign';
           const t = typeof body.ticket === 'string' && await store.get('tickets', body.ticket);
           if (!t || t.playerId !== p.id || t.kind !== kind) return err(400, 'ticket');
           await store.del('tickets', body.ticket);
           if (now() - t.created > TICKET_TTL) return err(400, 'expired');
           const rp = G.replay(t.start, body.actions); if (rp.error) return err(400, 'replay', { detail: rp.error });
           if (kind === 'campaign') { const r = G.finishCampaign(p, rp.battle); await save(); return ok({ result: r, state: pub(p) }); }
+          if (kind === 'wild') { const r = G.finishWild(p, rp.battle); await save(); return ok({ result: r, state: pub(p) }); }
           const opp = await store.get('players', t.start.oppId); if (!opp) { await save(); return ok({ result: { result: rp.battle.result, delta: 0, rating: p.arena.rating, xp: 0, scrap: 0, levelUps: [] }, state: pub(p) }); }
           const r = G.finishArena(p, opp, rp.battle); await save(); if (!opp.bot) await store.put('players', opp.id, opp);
           return ok({ result: r, state: pub(p) });

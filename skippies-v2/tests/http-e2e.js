@@ -3,20 +3,23 @@
 const { spawn } = require('child_process'), http = require('http'), zlib = require('zlib'), fs = require('fs'), path = require('path'), os = require('os');
 require('../public/engine.js');
 const ROOT = path.join(__dirname, '..');
+const USE_SOCKET = process.platform !== 'win32';
 const SOCK = path.join(os.tmpdir(), 'skippies-e2e-' + process.pid + '.sock');
+const PORT = 30000 + (process.pid % 20000);
 const DB = path.join(os.tmpdir(), 'skippies-e2e-' + process.pid + '.db');
 let fails = 0, passes = 0; const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 
 function start() {
-  try { fs.unlinkSync(SOCK); } catch (e) { }
-  const p = spawn(process.execPath, ['--no-warnings', 'server/server.js'], { cwd: ROOT, env: Object.assign({}, process.env, { SOCKET: SOCK, DB_FILE: DB, FETCH_DATA: '0', VAPID_SUBJECT: 'mailto:test@example.com' }) });
+  if (USE_SOCKET) try { fs.unlinkSync(SOCK); } catch (e) { }
+  const listenEnv = USE_SOCKET ? { SOCKET: SOCK } : { PORT: String(PORT) };
+  const p = spawn(process.execPath, ['--no-warnings', 'server/server.js'], { cwd: ROOT, env: Object.assign({}, process.env, listenEnv, { DB_FILE: DB, FETCH_DATA: '0', VAPID_SUBJECT: 'mailto:test@example.com' }) });
   let out = ''; p.stdout.on('data', d => out += d); p.stderr.on('data', d => out += d);
   return new Promise((res, rej) => { const t0 = Date.now(); (function wait() { if (/listening/.test(out)) return res({ p, log: () => out }); if (Date.now() - t0 > 8000) return rej(new Error('server did not start: ' + out)); setTimeout(wait, 50); })(); });
 }
 function req(method, p, body, headers) {
   return new Promise((res, rej) => {
     const data = body === undefined ? null : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
-    const r = http.request({ socketPath: SOCK, method, path: p, headers: Object.assign({ Host: 'localhost' }, data ? { 'Content-Type': 'application/json', 'Content-Length': data.length } : {}, headers || {}) }, rs => {
+    const r = http.request(Object.assign(USE_SOCKET ? { socketPath: SOCK } : { host: '127.0.0.1', port: PORT }, { method, path: p, headers: Object.assign({ Host: 'localhost' }, data ? { 'Content-Type': 'application/json', 'Content-Length': data.length } : {}, headers || {}) }), rs => {
       const chunks = []; rs.on('data', c => chunks.push(c)); rs.on('end', () => {
         let buf = Buffer.concat(chunks); if (rs.headers['content-encoding'] === 'gzip') buf = zlib.gunzipSync(buf);
         let json = null; try { json = JSON.parse(buf.toString()); } catch (e) { }
@@ -37,10 +40,12 @@ function grid(n) { const r = G.mulberry32(500 + n); return Array.from({ length: 
   ok(r.raw.length < Buffer.byteLength(r.text) / 2, 'gzip roughly halves the page or better (' + r.raw.length + ' vs ' + Buffer.byteLength(r.text) + ')');
   ok(/default-src 'self'/.test(r.headers['content-security-policy'] || '') && r.headers['x-content-type-options'] === 'nosniff' && r.headers['x-frame-options'] === 'DENY', 'security headers');
   ok(r.headers['cache-control'] === 'no-cache', 'html not long-cached');
+  ok(/img-src[^;]*https:\/\/www\.onemap\.gov\.sg/.test(r.headers['content-security-policy']), 'CSP allows OneMap map images and logo');
+  ok(r.headers['referrer-policy'] === 'strict-origin-when-cross-origin', 'referrer policy sends only the site origin to map servers');
   const etag = r.headers.etag; r = await req('GET', '/', undefined, { 'If-None-Match': etag });
   ok(r.status === 304, 'ETag gives 304');
   r = await req('GET', '/styles.css', undefined, { 'Accept-Encoding': 'gzip' }); ok(r.status === 200 && /text\/css/.test(r.headers['content-type']) && r.text.includes('--brand'), 'css served');
-  for (const f of ['engine.js', 'api.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-social.js', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'data/recycling-points.json']) {
+  for (const f of ['engine.js', 'api.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'data/recycling-points.json']) {
     r = await req('GET', '/' + f); ok(r.status === 200, 'served ' + f);
   }
   r = await req('GET', '/config.js'); ok(r.status === 200 && r.text.includes('SKIPPIES_SERVER = location.origin'), 'config.js points the app at this server');

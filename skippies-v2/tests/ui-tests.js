@@ -55,7 +55,8 @@ let downloads = [];
 global.URL = { createObjectURL: b => { downloads.push(b); return 'blob:x'; }, revokeObjectURL: () => { } };
 global.Blob = class { constructor(parts, o) { this.text = parts.join(''); this.type = o && o.type; } };
 let geo = { lat: 1.3521, lng: 103.8198 };
-Object.defineProperty(globalThis, 'navigator', { value: { geolocation: { getCurrentPosition: (ok_) => ok_({ coords: { latitude: geo.lat, longitude: geo.lng } }) } }, configurable: true, writable: true });
+let watches = 0;
+Object.defineProperty(globalThis, 'navigator', { value: { geolocation: { getCurrentPosition: (ok_) => ok_({ coords: { latitude: geo.lat, longitude: geo.lng } }), watchPosition: (ok_) => { watches++; ok_({ coords: { latitude: geo.lat, longitude: geo.lng, accuracy: 12 } }); return watches; }, clearWatch: () => { } } }, configurable: true, writable: true });
 if (!globalThis.crypto) globalThis.crypto = nodeCrypto.webcrypto;
 
 // ---------- server (online mode): the real API with a memory store, behind a fake fetch ----------
@@ -109,7 +110,7 @@ async function playBattle(maxTurns) {
 }
 
 (async () => {
-  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-social.js']) {
+  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js']) {
     if (f === 'config.js' && MODE === 'online') continue; // server serves its own config.js
     loadScript(f);
   }
@@ -124,14 +125,30 @@ async function playBattle(maxTurns) {
   noEmoji('welcome');
   await click($('howscan'), 'how scans work'); ok(txt().includes('never uploaded'), 'scan explainer'); await closeSheet();
   await click($('go'), 'start');
-  ok(!!sel('[data-nm]'), 'name picker opened');
-  ok($('namego').disabled, 'start disabled until a name is picked');
-  const pick = sel('[data-nm]').textContent.trim();
-  sel('[data-nm]').click(); await flush();
-  ok(sel('[data-nm]').getAttribute('aria-checked') === 'true' && !$('namego').disabled, 'name selected');
+  ok(!!sel('[data-nm]') && !!$('nameinput'), 'name picker opened with text box + random names');
+  const typeName = async v => { const i = $('nameinput'); i.value = v; i.oninput({}); await flush(); await advance(600); };
+  ok($('nameinput').value === sel('[data-nm]').textContent.trim() && sel('[data-nm]').getAttribute('aria-checked') === 'true', 'first random name pre-filled');
+  await typeName('ab'); ok($('namego').disabled && /3 to 20/.test($('namemsg').textContent), 'too short rejected live');
+  await typeName('Kopi#Kid'); ok($('namego').disabled && /letters, numbers/.test($('namemsg').textContent), 'symbols rejected live');
+  await typeName('Sh1t Lord'); ok($('namego').disabled && /isn\u2019t allowed/.test($('namemsg').textContent), 'rude word (leetspeak) rejected live');
+  await typeName('Admin Ah Boy'); ok($('namego').disabled && /staff/.test($('namemsg').textContent), 'staff-like name rejected live');
+  await typeName('Tan 91234567'); ok($('namego').disabled && /numbers/.test($('namemsg').textContent), 'phone-number-like name rejected live');
+  ok($('nameinput').attrs.maxlength === '20', 'input capped at 20 characters');
+  await typeName('Bubble Tea Ninja'); ok(!$('namego').disabled && /Looks good/.test($('namemsg').textContent) && $('namecount').textContent === '16/20', 'own name accepted with counter');
+  ok(sel('[data-nm][aria-checked="true"]') === null, 'random chips unselected while typing own name');
+  const firstChip = sel('[data-nm]').textContent.trim();
+  await click($('rer'), 'shuffle random names'); await advance(600);
+  ok(!!sel('[data-nm]') && $('nameinput').value === sel('[data-nm]').textContent.trim(), 'shuffle fills a new random name');
+  sel('[data-nm]').click(); await flush(); await advance(600);
+  ok(sel('[data-nm]').getAttribute('aria-checked') === 'true' && !$('namego').disabled, 'random name selected');
+  await typeName('  Bubble   Tea Ninja  ');
   await click($('namego'), 'start playing');
-  ok(SK.st && SK.st.name === pick, 'chosen name saved: ' + pick);
-  ok(G.validName(SK.st.name), 'name is from the safe generated list');
+  ok(SK.st && SK.st.name === 'Bubble Tea Ninja', 'own name saved, spaces tidied: ' + (SK.st && SK.st.name));
+  ok(G.checkName(SK.st.name).ok && firstChip.length > 0, 'saved name passes the filter');
+  // change again straight away: blocked for 7 days
+  await click($('settings'), 'open settings'); await click($('rename'), 'change name');
+  ok(!!$('namelock') && $('nameinput').disabled && $('namego').disabled, 'name change locked for 7 days after setting it');
+  await click($('nmback'), 'back from name');
   ok(!!$('catch-byo') && !!$('catch-rec'), 'home has BYO + recycle catch buttons');
   ok(txt().includes('Your first egg is waiting'), 'empty buddy shows first-egg state');
   ok(MODE === 'local' ? txt().includes('Offline mode') : !txt().includes('Offline mode'), 'mode banner correct');
@@ -226,14 +243,16 @@ async function playBattle(maxTurns) {
     ok(a2.status === 200, 'second player hatched');
     await serverApi.handle({ method: 'PUT', path: '/api/zone', headers: H2, body: { zone: G.geohash(geo.lat, geo.lng, 5) } });
     global.P2 = { H2, code: reg.body.state.friendCode };
-    // set my zone via Radar (on-device geohash)
-    await click(sel('[data-tab="radar"]'), 'radar'); await flush();
+    // set my zone from the map's Nearby sheet (on-device geohash)
+    await click(sel('[data-tab="radar"]'), 'map'); await flush();
+    await click($('maplist'), 'nearby sheet'); await flush();
     await click($('setzone'), 'set zone'); await flush();
     ok(SK.st.zone === G.geohash(geo.lat, geo.lng, 5) && SK.st.zone.length === 5, 'zone saved as 5-char geohash only');
     ok(txt().includes('Area saved'), 'zone saved message');
     // outside Singapore is refused
     geo = { lat: 51.5, lng: -0.12 }; await click($('setzone'), 'set zone abroad'); await flush();
     ok(txt().includes('only available inside Singapore'), 'non-SG zone refused'); geo = { lat: 1.3521, lng: 103.8198 };
+    await closeSheet();
   }
   await click(sel('[data-tab="battle"]'), 'battle tab'); await click(sel('[data-sub="arena"]'), 'arena'); await flush(); await flush();
   ok(!!sel('[data-opp]'), 'arena opponents listed');
@@ -306,20 +325,86 @@ async function playBattle(maxTurns) {
     await click(sel('[data-b="arena"]'), 'arena board'); await flush(); await flush(); ok(!!(sel('.podium .me') || sel('.row.me')), 'arena board renders');
   } else ok(txt().includes('Offline mode: Singapore-wide rankings'), 'offline ranks explanation');
 
-  // ---------- radar ----------
+  // ---------- live map ----------
   // compact array format, exactly as the data tool writes it
-  SK._radarTest.setData({ source: 'TEST', points: [['bin', 1.3530, 103.8198, '', 'Blk 1 Test St S100001'], ['ewaste', 1.3600, 103.8198, 'E Point', 'Mall'], ['bin', 1.45, 103.82, '', 'Blk 9 North Rd']] });
-  await click(sel('[data-tab="radar"]'), 'radar');
+  const MT = SK._mapTest;
+  MT.setData({ source: 'TEST', points: [['bin', 1.3530, 103.8198, '', 'Blk 1 Test St S100001'], ['ewaste', 1.3600, 103.8198, 'E Point', 'Mall'], ['bin', 1.45, 103.82, '', 'Blk 9 North Rd']] });
+  await click(sel('[data-tab="radar"]'), 'map tab'); await advance(50);
+  ok(!!$('map') && sel('.tab[aria-current="page"]').textContent.includes('Map'), 'map tab opens a full map');
+  if (MODE === 'online') {
+    ok(!!sel('.map-attr') && !sel('.map-attr').hasAttribute('hidden') && txt().includes('Singapore Land Authority') && sel('.map-attr img').getAttribute('src').startsWith('https://www.onemap.gov.sg/'), 'OneMap logo + attribution shown (required by OneMap terms)');
+  } else ok(sel('#map').className.includes('no-tiles') && sel('.map-attr').hasAttribute('hidden'), 'offline mode: street map off by default');
+  // location
+  if (!MT.M.me) { ok(!!$('geoon') && txt().includes('exact location stays on this phone'), 'location prompt explains privacy'); await click($('geoon'), 'turn on location'); }
+  await advance(50);
+  ok(MT.M.geo === 'on' && MT.M.me && Math.abs(MT.M.me.lat - geo.lat) < 1e-9, 'map follows your location');
+  ok(!!sel('.mk.me') && sel('.mk.me').textContent.includes('You'), 'your buddy marks your position');
+  ok(!!sel('.mk.range'), 'interaction range circle drawn');
+  if (MODE === 'online') {
+    const tiles = all('.tile-img');
+    ok(tiles.length >= 4 && tiles.every(t => /^https:\/\/www\.onemap\.gov\.sg\/maps\/tiles\/Default\/17\/\d+\/\d+\.png$/.test(t.getAttribute('src'))), 'OneMap tiles requested at zoom 17 (' + tiles.length + ')');
+    const tx = Math.floor(G.lngToX(geo.lng, 17) / 256), ty = Math.floor(G.latToY(geo.lat, 17) / 256);
+    ok(tiles.some(t => t.getAttribute('src').endsWith(`/17/${tx}/${ty}.png`)), 'the tile under you is loaded');
+  } else ok(all('.tile-img').length === 0, 'offline mode: no map images requested');
+  const pins = all('.mk.pin'); ok(pins.length === 1, 'only on-screen recycling points drawn (' + pins.length + ')');
+  ok(MT.M.spawns.length > 0 && all('.mk.wild').length > 0, 'wild Litterbugs on the map (' + MT.M.spawns.length + ')');
+  ok(/Litterbugs? nearby/.test(sel('#mhud').textContent) && sel('#mhud').textContent.includes('wild 0/10'), 'map HUD shows nearby count and daily wild battles');
+  noEmoji('map');
+  // a far Litterbug cannot be battled
+  const far = MT.M.spawns.find(s => s.dist > G.C.WILD_RANGE_M);
+  if (far) { MT.tapMarker('w:' + far.id); await flush(); ok($('wildgo').disabled && txt().includes('Walk closer'), 'far Litterbug: walk closer'); await closeSheet(); }
+  // walk up to one and battle it
+  const target = MT.M.spawns[MT.M.spawns.length - 1];
+  geo = { lat: target.lat, lng: target.lng }; MT.setHere(geo); await advance(50);
+  const sp = MT.M.spawns.find(s => s.id === target.id);
+  ok(sp && sp.dist < 1, 'walking moves you on the map');
+  const mk = sel(`[data-mk="w:${target.id}"]`); ok(!!mk, 'marker for the Litterbug');
+  await click(mk, 'tap Litterbug'); await flush();
+  ok(txt().includes('Wild ' + G.LITTER[target.litter].name) && !$('wildgo').disabled, 'in range: battle button enabled');
+  const en0 = SK.st.energy;
+  await click($('wildgo'), 'battle wild'); await flush(); await flush();
+  ok(txt().includes('A wild ' + G.LITTER[target.litter].name + ' appeared') && SK.st.energy === en0 - 1, 'wild battle starts and costs 1 energy');
+  ok(await playBattle(), 'wild battle reaches result');
+  const wonWild = txt().includes('Cleaned up');
+  ok(txt().includes('Wild Litterbug'), 'wild result screen');
+  await click($('cont'), 'continue'); await advance(50);
+  ok(SK.tab === 'radar' && !!$('map'), 'back to the map after a wild battle');
+  ok(SK.st.wild.n === 1, 'wild battle counted server-side');
+  if (wonWild) ok(!MT.M.spawns.some(s => s.id === target.id) && !sel(`[data-mk="w:${target.id}"]`), 'beaten Litterbug disappears from the map');
+  // controls
+  const z0 = MT.M.zoom; await click($('mzin'), 'zoom in'); await advance(50); ok(MT.M.zoom === Math.min(19, Math.round(z0) + 1), 'zoom in');
+  await click($('mzout'), 'zoom out'); await advance(50); ok(MT.M.zoom === Math.round(z0), 'zoom out');
+  const tilt0 = MT.prefs.tilt; await click($('mtilt'), '3D toggle'); ok(MT.prefs.tilt === !tilt0 && $('map').className.includes('tilted') === !tilt0, '3D tilt toggles'); await click($('mtilt'), '3D toggle back');
+  const c0 = Object.assign({}, MT.M.center); MT.panBy(120, 0); await advance(50);
+  ok(MT.M.center.lng < c0.lng && MT.M.follow === false, 'dragging right shows what is west, and stops following');
+  await click($('locate'), 'recentre'); await advance(50); ok(MT.M.follow && Math.abs(MT.M.center.lng - geo.lng) < 1e-9, 'recentre button');
+  // recycling point sheet -> recycle flow
+  geo = { lat: 1.3521, lng: 103.8198 }; MT.setHere(geo); await advance(50);
+  await click(sel('.mk.pin'), 'tap bin'); await flush();
+  ok(txt().includes('Blue recycling bin') && txt().includes('Blk 1 Test St') && sel('#pdir').getAttribute('href').includes('travelmode=walking'), 'bin sheet with walking directions');
+  await click($('rechere'), 'I recycled here'); ok(txt().includes('What are you recycling?'), 'jumps straight into the recycle flow');
+  await click($('back'), 'back'); await click(sel('[data-tab="radar"]'), 'map'); await advance(50);
+  // nearby list
+  await click($('maplist'), 'nearby list'); await flush();
   ok(txt().includes('Return Right') && txt().includes('10¢') && txt().includes('bubble tea'), 'BCRS refund info + eligibility note');
-  await click($('locate'), 'locate me'); await flush();
-  ok(txt().includes('Blk 1 Test St') && txt().includes('Blue recycling bin') && txt().includes("100 m \u00b7"), 'nearest bin listed with distance (~100 m)');
+  ok(txt().includes('Blk 1 Test St') && txt().includes("100 m \u00b7"), 'nearest bin listed with distance (~100 m)');
   const items = all('.plist .row'); ok(items.length === 3 && items[0].textContent.includes('Test St'), 'sorted by distance');
   ok(sel('.plist a').getAttribute('href').includes('google.com/maps/dir'), 'directions link');
-  ok(all('.radar circle').length >= 7, 'radar svg plots points within 1 km');
-  ok(txt().includes('2 within 1 km'), 'radar count');
-  noEmoji('radar');
-  await click(sel('[data-k="ewaste"]'), 'filter e-waste'); ok(all('.plist .row').length === 1, 'e-waste filter');
-  SK._radarTest.setData({ source: '', points: [] }); await click(sel('[data-k="all"]'), 'all'); ok(txt().includes('hasn\u2019t been loaded'), 'empty data message');
+  ok(txt().includes('OneMap (Singapore Land Authority)'), 'map privacy note in settings');
+  await click(sel('[data-k="ewaste"]'), 'filter e-waste'); await advance(50); ok(all('.plist .row').length === 1, 'e-waste filter');
+  ok(all('.mk.pin').length === 0, 'filter applies to the map pins too');
+  await click(sel('[data-k="all"]'), 'filter all'); await flush();
+  const tg = $('tilestog'); const tiles0 = tg.checked; tg.checked = !tiles0; tg.click(); await flush();
+  ok(sel('#map').className.includes('no-tiles') === tiles0, 'street map toggle');
+  tg.checked = tiles0; tg.click(); await closeSheet(); await advance(50);
+  MT.setData({ source: '', points: [] }); await click($('maplist'), 'nearby list'); await flush(); ok(txt().includes('hasn\u2019t loaded'), 'empty data message'); await closeSheet();
+  // outside Singapore
+  MT.setHere({ lat: 51.5, lng: -0.12 }); await advance(50);
+  ok(txt().includes('Outside Singapore') && MT.M.spawns.length === 0, 'outside Singapore: banner, no spawns');
+  geo = { lat: 1.3521, lng: 103.8198 }; MT.setHere(geo); await advance(50);
+  ok(MT.M.spawns.length > 0, 'back in Singapore');
+  // the server never learns where you are
+  if (MODE === 'online') { const dump = JSON.stringify(await serverApi.handle({ method: 'GET', path: '/api/state', headers: { authorization: 'Bearer ' + SK.token() } })); ok(!dump.includes('103.81') && !dump.includes('1.352'), 'exact location never reaches the server'); }
 
   // ---------- settings: reminders ----------
   await click($('settings'), 'settings');

@@ -57,7 +57,7 @@
           ${s.lastCatch && s.dex[s.lastCatch.id] ? `<button class="row" id="lastcatch"><span class="lead" style="background:none">${SK.art(s.lastCatch.id, { size: 40 })}</span><span class="grow"><span class="title">${esc(SK.nm(s.lastCatch.id))}</span><br><span class="meta">Latest catch \u00b7 ${SK.ago(s.lastCatch.ts)}</span></span>${SK.rarityTag(SP[s.lastCatch.id].rarity)}</button>` : ''}
           ${nextArea >= 0 && s.team.length ? `<button class="row" id="gocampaign"><span class="lead">${ic('battle', 20)}</span><span class="grow"><span class="title">${esc(AREAS[nextArea].name)}</span><br><span class="meta tnum">Stage ${s.areas[nextArea].progress + 1} of 4 \u00b7 1 energy</span></span>${ic('next', 20)}</button>` : ''}
           ${s.team.length ? `<button class="row" id="goarena"><span class="lead">${ic('users', 20)}</span><span class="grow"><span class="title">Arena</span><br><span class="meta tnum">Rating ${SK.fmt(s.arena.rating)} \u00b7 battle players near you</span></span>${ic('next', 20)}</button>` : ''}
-          <button class="row" id="goradar"><span class="lead">${ic('location', 20)}</span><span class="grow"><span class="title">Find a recycling point</span><br><span class="meta">Blue bins, e-waste and Return Right machines</span></span>${ic('next', 20)}</button>
+          <button class="row" id="goradar"><span class="lead">${ic('location', 20)}</span><span class="grow"><span class="title">Open the map</span><br><span class="meta">Recycling points and wild Litterbugs near you</span></span>${ic('next', 20)}</button>
         </div>
       </section>
       <section class="section" aria-label="Habit mileage">
@@ -98,7 +98,7 @@
     F = { kind, item: null, together: false, family: false };
     const list = kind === 'byo' ? BYO_ITEMS : RECYCLE_ITEMS;
     const short = { cup: 'Cup', bottle: 'Bottle', box: 'Container', bag: 'Tote bag', kit: 'Cutlery or straw', bev: 'Can or bottle', paper: 'Paper', ewaste: 'E-waste' };
-    SK.$app.innerHTML = `<div class="flow light-flow"><div class="flow-top"><button class="flow-back" id="back" type="button" aria-label="Back to home">${ic('close', 22)}<span>Back</span></button><h2>${kind === 'byo' ? 'Log a BYO' : 'Log recycling'}</h2></div>
+    SK.$app.innerHTML = `<div class="flow light-flow"><div class="flow-top"><button class="icon-btn" id="back" aria-label="Back">${ic('back', 24)}</button><h2>${kind === 'byo' ? 'Log a BYO' : 'Log recycling'}</h2></div>
       <div class="flow-body" style="justify-content:flex-start">
         <h1>${kind === 'byo' ? 'What did you bring?' : 'What are you recycling?'}</h1>
         <div class="choices" role="radiogroup" aria-label="Item">${list.map(k => `<button class="choice" role="radio" aria-checked="false" data-it="${k}"><span class="ck">${ic('check', 14, { sw: 3 })}</span>${ic(Icon.ITEM[k], 32)}<span>${short[k]}</span></button>`).join('')}</div>

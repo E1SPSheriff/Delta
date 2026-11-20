@@ -65,8 +65,22 @@ async function suite(label, store) {
   ok((await call('POST', '/api/train', { id: tid, scrap: 99999 }, A)).body.error === 'amount', label + ' train amount cap');
   ok((await call('POST', '/api/team', { ids: ['semakoral'] }, A)).body.error === 'team', label + ' team validation');
   ok((await call('POST', '/api/team', { ids: [tid, tid] }, A)).body.error === 'team', label + ' team no dupes');
-  ok((await call('POST', '/api/name', { name: 'Bad Word 123' }, A)).body.error === 'name', label + ' free-text name rejected');
-  const nm = (await call('GET', '/api/names')).body.names[0]; ok((await call('POST', '/api/name', { name: nm }, A)).body.state.name === nm, label + ' pick generated name');
+  // player names: own name (3-20, filtered, unique) or a random one; one change per 7 days
+  const badNames = { 'F*ck It': 'chars', 'Sh1t Lord': 'blocked', 'lan jiao': 'blocked', 'Admin Bob': 'reserved', ab: 'length', ['x'.repeat(21)]: 'length', 'Tan 91234567': 'digits', '': 'empty', '1234': 'letters' };
+  for (const [n, why] of Object.entries(badNames)) { r = await call('POST', '/api/name', { name: n }, A); ok(r.status === 400 && r.body.error === 'name' && r.body.reason === why && !!r.body.message, label + ' name rejected (' + why + '): ' + n); }
+  r = await call('POST', '/api/name', { name: { x: 1 } }, A); ok(r.status === 400 && r.body.error === 'name', label + ' non-string name rejected');
+  r = await call('POST', '/api/name', { name: 'Kopi Hero' }, B); ok(r.status === 200 && r.body.state.name === 'Kopi Hero' && r.body.state.nameSetAt === clock.t, label + ' own name saved');
+  r = await call('POST', '/api/name', { name: '  kopi   HERO ' }, A); ok(r.status === 409 && r.body.error === 'taken', label + ' duplicate name (any case/spacing) rejected');
+  r = await call('GET', '/api/name-check?name=Kopi%20Hero', null, A); ok(r.body.ok === false && r.body.reason === 'taken', label + ' name-check: taken');
+  r = await call('GET', '/api/name-check?name=Kopi%20Hero', null, B); ok(r.body.ok === true, label + ' name-check: own name is fine');
+  r = await call('GET', '/api/name-check?name=Sh1t', null, A); ok(r.body.ok === false && r.body.reason === 'blocked', label + ' name-check: filter');
+  r = await call('POST', '/api/name', { name: '  Kopi   Queen 2 ' }, A); ok(r.status === 200 && r.body.state.name === 'Kopi Queen 2', label + ' name spaces tidied');
+  r = await call('POST', '/api/name', { name: 'Kopi Queen 2' }, A); ok(r.status === 200, label + ' saving the same name is a no-op');
+  const nm = (await call('GET', '/api/names')).body.names[0];
+  r = await call('POST', '/api/name', { name: nm }, A); ok(r.status === 403 && r.body.error === 'namecooldown' && r.body.next === clock.t + 7 * G.DAY && /again on/.test(r.body.message), label + ' 1 name change per 7 days');
+  { const pa = (await store.list('players')).find(x => x.name === 'Kopi Queen 2'); pa.nameSetAt -= 7 * G.DAY; await store.put('players', pa.id, pa); }
+  r = await call('POST', '/api/name', { name: nm }, A); ok(r.status === 200 && r.body.state.name === nm, label + ' random name allowed after 7 days');
+  ok((await call('GET', '/api/names')).body.names.every(n => G.checkName(n).ok), label + ' random names pass the filter');
   // zone
   ok((await call('PUT', '/api/zone', { zone: 'u4pru' }, A)).body.error === 'zone', label + ' non-SG zone rejected');
   const zone = G.geohash(1.3099, 103.7775, 5); ok(G.validZone(zone), label + ' SP campus geohash valid ' + zone);

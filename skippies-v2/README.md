@@ -22,7 +22,17 @@ SKIPPIES answers this by turning every *real* BYO or recycling moment into a ran
   - Type cycle: 🥤→💧→🍱→👜→🥢→♻️→🥤 (1.5×).
   - Elo K=32. The offline defender gets half the rating change.
 - **Leaderboards**: eco this week / all time / arena, for all of Singapore or your zone plus the zones around it. Only photo-verified actions count, and practice bots never appear.
-- **Recycling Radar**: nearest NEA blue bins and e-waste points (data.gov.sg) on a radar, with Google Maps directions, plus links to BCRS Return Right machines.
+- **Live map (Map tab)**: a real street map of Singapore from **OneMap** (Singapore Land Authority). It's built in plain code with no map library.
+  - Your buddy Skippy stands at your GPS position, with a 150 m "reach" circle around you.
+  - A **3D tilt** view, or 2D; drag to pan, pinch or buttons to zoom, and a recentre button.
+  - **Recycling pins** (blue bins, e-waste) from NEA data, grouped into numbered clusters when you zoom out. Tap one for walking directions or **"I recycled here"**, which opens the recycle camera.
+  - **Wild Litterbugs** spawn on the map. Every ~150 m map cell may hold one per 15-minute window, and **everyone sees the same ones**.
+    - Walk within 150 m to battle one.
+    - Costs 1 energy; up to 10 a day; a win gives +8 scrap and XP.
+    - The server re-checks the battle like the campaign.
+    - **Your location is never sent to the server.** The server only checks species, energy and the daily limit.
+  - OneMap's logo and credit are always shown, as its terms require. In offline (under-13) mode the street map is **off by default**, so nothing is requested from OneMap unless the player turns it on.
+  - A **Nearby** list gives the nearest points with distances, filters, Return Right links, and your optional ~5 km area.
   - The packaged data file is empty. **The server downloads the data automatically on first start** (and refreshes it every 30 days). It needs internet, so this doesn't happen on a laptop with no connection. The tool was tested against copies of the real dataset formats, but not against a live download. Until the data loads, the Radar shows the official map links.
   - Data dates: Recycling Bins last updated 6 Jun 2024; E-waste last updated 2022, so it may be outdated.
   - BCRS has no open dataset, so the app links out to returnright.sg. Note that freshly prepared drinks (e.g. bubble tea) are not BCRS-eligible. Those count as BYO, not recycling.
@@ -57,7 +67,7 @@ SKIPPIES answers this by turning every *real* BYO or recycling moment into a ran
 
 ## Safety and privacy (PDPC guidance for children's data)
 - **Under 13**: offline mode only (all data stays on the device). **13+**: online.
-- Names are **generated** (e.g. "Sunny Kopicat 482"). There is no free text and no chat.
+- **Player names:** type your own or tap a random one (e.g. "Sunny Kopicat 482"). Own names must be 3 to 20 letters, numbers or spaces, with at least 2 letters and at most 4 digits (so no phone numbers or NRICs). A word filter blocks swear words, including Singlish ones, leetspeak ("sh1t"), stretched letters ("fuuuck") and spaced-out letters ("f u c k"). Names that look like staff, MamaShop or the game are reserved. Names are unique online (ignoring case and spaces), and a name can be changed once every 7 days (`NAME_COOLDOWN_DAYS` in engine.js). The same check runs in the app (instant feedback) and on the server (the real check). No word filter is perfect, so a moderator should still be able to rename a reported player. There is no chat.
 - Location is **opt-in**. Only a ~5 km geohash zone is stored. Exact location is used only on the phone for the Radar.
 - Nearby battles use **asynchronous copies of teams**, so strangers are never in live contact.
 - Eggs are free, have **published odds** (base and effective-with-pity), cannot be bought and cannot be traded.
@@ -129,7 +139,10 @@ Rules to keep:
 - Write a one-page DPIA (Data Protection Impact Assessment) before a real launch.
 
 ## Not yet verified (needs real devices / internet)
-- How it looks in a real browser. Layouts were checked with code-level tests, not screenshots.
+- How it looks in a real browser. Layouts were checked with code-level tests, not screenshots. The 3D map tilt was checked with geometry calculations for 360–480 px phones.
+- Live OneMap map images. The tile addresses were checked against the standard map-tile formula; actual loading wasn't tested (no internet here). Also check OneMap's full Terms of Use before a public launch.
+- Map gestures (drag and pinch) on a real touch screen.
+- Walking with GPS: phone GPS can be 10–50 m off, so the 150 m reach is generous on purpose.
 - Real push delivery (the encryption matches the RFC 8291 test vector)
 - A live data.gov.sg download (only copies of its formats were tested)
 - Scanner accuracy and speed on low-end phones

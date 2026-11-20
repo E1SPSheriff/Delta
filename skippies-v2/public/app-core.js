@@ -135,31 +135,32 @@
   SK.setState = s => { SK.st = s; if (s.serverNow) SK.offset = s.serverNow - Date.now(); };
   SK.errMsg = (r, fallback) => (r.body && (r.body.message || SK.ERR[r.body.error])) || fallback || 'Something went wrong. Try again.';
   SK.ERR = {
+    wildlimit: 'That\u2019s ' + C.WILD_PER_DAY + ' wild battles today. More Litterbugs tomorrow.', wild: 'That Litterbug has wandered off.',
     energy: 'Out of energy. A real BYO or recycle gives +3, and you get +2 every day.', locked: 'That area is still locked.', order: 'Beat the earlier fight first.',
     team: 'Hatch a Skippy and add it to your team first.', copies: 'Not enough duplicate copies yet.', max: 'Already maxed out.', scrap: 'Not enough scrap.',
     nobyo: 'Do a photo-checked BYO first, then rinse it.', done: 'Already rinsed today.', nozone: 'Set your area first in Radar.', notfound: 'No player with that code.',
-    season: 'Your season isn\u2019t over yet.', code: 'Codes are 6 letters or numbers.', ticket: 'That battle expired. Start a new one.', expired: 'That battle expired. Start a new one.', name: 'Pick one of the suggested names.'
+    season: 'Your season isn\u2019t over yet.', code: 'Codes are 6 letters or numbers.', ticket: 'That battle expired. Start a new one.', expired: 'That battle expired. Start a new one.', name: 'That name can\u2019t be used. Try another.', taken: 'Someone already has that name. Try another, or add a number.', namecooldown: 'You can change your name once every 7 days.'
   };
   SK.setMode = m => { SK.mode = m; LS.set(K_MODE, m); };
   SK.saveToken = t => LS.set(K_TOKEN + SK.mode, t);
   SK.wipe = () => { LS.del(K_TOKEN + SK.mode); if (SK.mode === 'local') { LS.del(K_LOCAL); localApi = null; } LS.del(K_MODE); SK.mode = SERVER ? null : 'local'; SK.st = null; };
 
   // ---------- shell ----------
-  const TABS = [['home', 'home', 'Home'], ['dex', 'dex', 'Dex'], ['battle', 'battle', 'Battle'], ['ranks', 'ranks', 'Ranks'], ['radar', 'radar', 'Radar']];
+  const TABS = [['home', 'home', 'Home'], ['dex', 'dex', 'Dex'], ['battle', 'battle', 'Battle'], ['ranks', 'ranks', 'Ranks'], ['radar', 'map', 'Map']];
   SK.views = {}; SK.binders = {};
   SK.render = function () {
-    SK.clearTimers(); if (SK.stopCam) SK.stopCam(); SK.dark(false);
+    SK.clearTimers(); if (SK.stopCam) SK.stopCam(); if (SK.stopMap) SK.stopMap(); SK.dark(false);
     if (!SK.st) return SK.boot();
+    const isMap = SK.tab === 'radar';
     const body = (SK.views[SK.tab] || SK.views.home)();
     const s = SK.st, buddy = s.buddy && s.dex[s.buddy];
     SK.$app.innerHTML = `<header class="appbar" id="appbar">
-        <div class="brand-lockup" aria-label="MamaShop at Singapore Polytechnic"><span class="brand-mark">SK</span><span><b>SKIPPIES</b><small>MAMASHOP · SP</small></span></div>
         <button class="who" id="settings" aria-label="Profile and settings: ${esc(s.name)}"><span class="av">${buddy ? SK.art(s.buddy, { size: 30 }) : ic('egg', 20)}</span><span class="nm">${esc(s.name)}</span></button>
         <div class="pills"><button class="pill" id="pill-en" aria-label="Energy ${s.energy} of ${C.ENERGY_MAX}">${ic('energy', 16, { cls: 'en', filled: true })}<span>${s.energy}</span><span class="of">/${C.ENERGY_MAX}</span></button>
         <button class="pill" id="pill-sc" aria-label="Scrap ${s.scrap}">${ic('scrap', 16)}<span>${SK.fmt(s.scrap)}</span></button></div></header>
-      ${s.mode === 'local' ? `<div class="offline-bar">${ic('offline', 18)}Offline mode · progress is saved on this device only</div>` : ''}
+      ${s.mode === 'local' && !isMap ? `<div class="offline-bar">${ic('offline', 18)}Offline mode · progress is saved on this device only</div>` : ''}
       ${SK.netDown ? `<div class="offline-bar">${ic('alert', 18)}Can\u2019t reach the server. Showing your last saved progress.</div>` : ''}
-      <main id="main" class="main">${body}</main>
+      <main id="main" class="main${isMap ? ' main-map' : ''}">${body}</main>
       <nav class="tabbar" aria-label="Main">${TABS.map(([k, i, l]) => `<button class="tab" data-tab="${k}" ${SK.tab === k ? 'aria-current="page"' : ''}>${ic(i, 24, { filled: SK.tab === k })}<span>${l}</span></button>`).join('')}</nav>`;
     SK.$app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { if (SK.tab === b.dataset.tab) { root.scrollTo && root.scrollTo(0, 0); return; } SK.tab = b.dataset.tab; SK.render(); root.scrollTo && root.scrollTo(0, 0); });
     SK.on('settings', () => SK.settings());
@@ -213,7 +214,7 @@
         <div class="row"><span class="lead tnum" style="font-weight:800">2</span><span class="grow body2"><b>Hatch</b> a random Skippy. Merge duplicates up to 5 stars.</span></div>
         <div class="row"><span class="lead tnum" style="font-weight:800">3</span><span class="grow body2"><b>Battle</b> Litterbugs and players near you. The more you BYO, the stronger you get.</span></div>
       </div>
-      <p class="caption">${SK.mode === 'local' ? 'Offline mode: nothing leaves this device.' : 'We store a game name we make for you, your progress and short photo fingerprints (never your photos). Location is optional and only a rough area.'}</p></div>
+      <p class="caption">${SK.mode === 'local' ? 'Offline mode: nothing leaves this device.' : 'We store your player name (one you make up or a random one), your progress and short photo fingerprints (never your photos). Location is optional and only a rough area.'}</p></div>
       <div class="flow-foot"><button class="btn btn-primary btn-block" id="go">Let\u2019s go</button><button class="btn btn-ghost" id="howscan">How scans work</button></div></div>`;
     SK.on('howscan', SK.howScans);
     SK.on('go', async () => {
@@ -228,29 +229,69 @@
     <p>Your photo is <b>never uploaded</b>. We only send a 16-character fingerprint, so the same photo can\u2019t be used twice.</p>
     <p>Limits keep it fair: one photo a minute and up to ${C.MAX_ACTIONS_PER_DAY} eggs a day.</p>
     <p class="caption">The first scan downloads the scanner (about 5 MB), so it needs internet.</p></div>`);
+  // Player name: type your own (3-20 letters/numbers, word filter, must be unique online) or tap a random one.
+  // The same rules run here (instant feedback) and on the server (the real check).
   SK.pickName = async function (first) {
-    const r = await SK.call('GET', '/api/names');
-    const names = (r.body && r.body.names) || [];
-    let pick = null;
+    const s = SK.st || {}, days = C.NAME_COOLDOWN_DAYS || 7;
+    const nextAt = !first && s.nameSetAt ? s.nameSetAt + days * G.DAY : 0;
+    const locked = nextAt > SK.now();
+    let names = [];
+    const r = await SK.call('GET', '/api/names'); names = (r.body && r.body.names) || [];
+    const start = first ? (names[0] || '') : (s.name || '');
     SK.dark(false);
     SK.$app.innerHTML = `<div class="flow light-flow"><div class="flow-top">${first ? '' : `<button class="icon-btn" id="nmback" aria-label="Back">${ic('back', 24)}</button>`}</div>
-      <div class="flow-body" style="justify-content:flex-start"><h1>Pick your player name</h1><p class="muted">Shown on leaderboards. We make names for you so nobody shares personal info.</p>
-      <div class="group" role="radiogroup" aria-label="Names">${names.map((n, i) => `<button class="row" role="radio" aria-checked="false" data-nm="${i}"><span class="grow title">${esc(n)}</span><span class="trail" data-ck>${ic('check', 20)}</span></button>`).join('')}</div>
-      <button class="btn btn-ghost" id="rer">${ic('refresh', 20)}Show other names</button></div>
+      <div class="flow-body" style="justify-content:flex-start"><h1>${first ? 'Choose your player name' : 'Change your name'}</h1>
+      <p class="muted">Shown on leaderboards and to players you battle. Make one up, or tap a random one below.</p>
+      ${locked ? `<div class="banner warn" id="namelock">${ic('timer', 20)}<span>You changed your name recently. You can change it again on <b>${esc(G.ymdOf(nextAt))}</b>.</span></div>` : ''}
+      <label class="field" for="nameinput"><span>Player name</span></label>
+      <div class="name-field"><input class="input" id="nameinput" maxlength="${G.NAME_MAX}" autocomplete="off" autocapitalize="words" spellcheck="false" enterkeyhint="done" value="${esc(start)}" aria-describedby="namemsg namerules" ${locked ? 'disabled' : ''}><span class="name-count tnum" id="namecount" aria-hidden="true">0/${G.NAME_MAX}</span></div>
+      <p class="name-msg" id="namemsg" role="status" aria-live="polite"></p>
+      <p class="caption" id="namerules">${G.NAME_MIN} to ${G.NAME_MAX} letters, numbers or spaces. No rude words. Don\u2019t use your real full name, school, class or phone number.${first ? '' : ' You can change your name once every ' + days + ' days.'}</p>
+      <div class="name-sugg"><span class="label">Random names</span><button class="btn btn-ghost btn-sm" id="rer" ${locked ? 'disabled' : ''}>${ic('refresh', 18)}Shuffle</button></div>
+      <div class="chips name-chips" role="radiogroup" aria-label="Random names" id="namechips"></div></div>
       <div class="flow-foot"><button class="btn btn-primary btn-block" id="namego" disabled>${first ? 'Start playing' : 'Save name'}</button></div></div>`;
-    SK.$app.querySelectorAll('[data-ck]').forEach(x => x.style.visibility = 'hidden');
-    SK.$app.querySelectorAll('[data-nm]').forEach(b => b.onclick = () => {
-      pick = names[+b.dataset.nm];
-      SK.$app.querySelectorAll('[data-nm]').forEach(x => { const on = x === b; x.setAttribute('aria-checked', on ? 'true' : 'false'); x.classList.toggle('me', on); const ck = x.querySelector('[data-ck]'); if (ck) ck.style.visibility = on ? 'visible' : 'hidden'; });
-      doc.getElementById('namego').disabled = false;
+    const inp = doc.getElementById('nameinput'), cnt = doc.getElementById('namecount'), msg = doc.getElementById('namemsg'), go = doc.getElementById('namego'), box = doc.getElementById('namechips');
+    let seq = 0, timer = null;
+    const say = (text, kind) => { msg.textContent = text || ''; msg.className = 'name-msg' + (kind ? ' ' + kind : ''); };
+    const drawChips = () => {
+      const cur = G.cleanName(inp.value);
+      box.innerHTML = names.map((n, i) => `<button class="chip" role="radio" aria-checked="${n === cur}" data-nm="${i}" ${locked ? 'disabled' : ''}>${esc(n)}</button>`).join('');
+      box.querySelectorAll('[data-nm]').forEach(b => b.onclick = () => { inp.value = names[+b.dataset.nm]; update(); });
+    };
+    const update = () => {
+      const raw = inp.value, cur = G.cleanName(raw); seq++;
+      cnt.textContent = cur.length + '/' + G.NAME_MAX;
+      cnt.classList.toggle('over', cur.length > G.NAME_MAX);
+      box.querySelectorAll('[data-nm]').forEach(b => b.setAttribute('aria-checked', names[+b.dataset.nm] === cur ? 'true' : 'false'));
+      if (timer) { root.clearTimeout(timer); timer = null; }
+      if (locked) { go.disabled = true; return; }
+      if (!first && cur === s.name) { say('This is your current name.', ''); go.disabled = true; return; }
+      const c = G.checkName(raw);
+      if (!c.ok) { say(cur ? c.message : '', cur ? 'bad' : ''); go.disabled = true; inp.setAttribute('aria-invalid', cur ? 'true' : 'false'); return; }
+      inp.setAttribute('aria-invalid', 'false'); go.disabled = false;
+      if (SK.mode !== 'online') { say('Looks good.', 'good'); return; }
+      say('Checking\u2026', ''); const mine = seq;
+      timer = root.setTimeout(async () => {
+        const x = await SK.call('GET', '/api/name-check?name=' + encodeURIComponent(c.name));
+        if (mine !== seq) return; // they kept typing
+        if (x.status === 200 && x.body && x.body.ok === false) { say(x.body.message, 'bad'); go.disabled = true; }
+        else say(x.status === 200 ? 'Looks good. That name is free.' : 'Looks good.', 'good');
+      }, 450);
+    };
+    inp.oninput = update;
+    inp.onkeydown = e => { if (e.key === 'Enter' && !go.disabled) go.click(); };
+    drawChips(); update();
+    SK.on('rer', async () => {
+      const x = await SK.call('GET', '/api/names'); if (x.status !== 200) return SK.toast(SK.errMsg(x), 'alert');
+      names = x.body.names || []; inp.value = names[0] || inp.value; drawChips(); update();
     });
-    SK.on('rer', () => SK.pickName(first));
     SK.on('nmback', () => SK.render());
     SK.on('namego', async () => {
-      if (!pick) return;
-      const x = await SK.call('POST', '/api/name', { name: pick });
-      if (x.status !== 200) return SK.toast(SK.errMsg(x), 'alert');
-      SK.tab = 'home'; SK.render(); if (first) SK.toast('Welcome, ' + SK.st.name + '!', 'check');
+      const c = G.checkName(inp.value); if (!c.ok) { say(c.message, 'bad'); return; }
+      go.disabled = true;
+      const x = await SK.call('POST', '/api/name', { name: c.name });
+      if (x.status !== 200) { const m = SK.errMsg(x); say(m, 'bad'); SK.toast(m, 'alert'); go.disabled = x.body && x.body.error !== 'namecooldown' ? false : true; return; }
+      SK.tab = 'home'; SK.render(); SK.toast(first ? 'Welcome, ' + SK.st.name + '!' : 'Name saved', 'check');
     });
   };
 

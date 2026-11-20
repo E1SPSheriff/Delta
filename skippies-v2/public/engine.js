@@ -1,14 +1,15 @@
 /* SKIPPIES v2 game engine: pure, deterministic logic shared by the browser and the server. No DOM, no network. */
 (function (root) {
   'use strict';
-  const VERSION = '2.1.0', SAVE_V = 4, DAY = 86400000, HOUR = 3600000, MIN = 60000;
+  const VERSION = '2.3.0', SAVE_V = 4, DAY = 86400000, HOUR = 3600000, MIN = 60000;
   const TZ = 8 * HOUR; // Singapore time (UTC+8, no DST) for day boundaries everywhere
   const C = {
     SEASON_DAYS: 14, STAR_DAYS: 5, MAX_ACTIONS_PER_DAY: 6, ACTION_COOLDOWN_MS: 60000,
     ENERGY_MAX: 10, DAILY_ENERGY: 2, ACTION_ENERGY: 3, RINSE_ENERGY: 1,
     TEAM_MAX: 3, UTIL_USES: 2, MAX_LEVEL: 30, MAX_STARS: 5,
     PITY_RARE: 10, BYO_SCRAP: 10, RECYCLE_SCRAP: 30, DAILY_SCRAP: 10, SCRAP_XP: 2, TRAIN_STEP: 10,
-    MILEAGE_CAP: 25, ELO_K: 32, ARENA_START: 1000, HASH_DISTANCE: 6, HASH_WINDOW_DAYS: 30, OWN_HASH_DAYS: 90
+    MILEAGE_CAP: 25, ELO_K: 32, ARENA_START: 1000, HASH_DISTANCE: 6, HASH_WINDOW_DAYS: 30, OWN_HASH_DAYS: 90, NAME_COOLDOWN_DAYS: 7,
+    WILD_PER_DAY: 10, WILD_SLOT_MS: 15 * 60000, WILD_CHANCE: 22, WILD_RANGE_M: 150, WILD_SCAN_M: 400, WILD_SCRAP: 8
   };
 
   // ---------- types & items ----------
@@ -153,14 +154,133 @@
     return Array.from(out);
   }
   const nearZone = (a, c) => !!a && !!c && zoneNeighbors(a).includes(c);
+  function cellBounds(h) { // geohash -> {s, w, n, e}
+    let latR = [-90, 90], lngR = [-180, 180], even = true;
+    for (const ch of h) { const v = GH.indexOf(ch); if (v < 0) return null; for (let bit = 4; bit >= 0; bit--) { const r = even ? lngR : latR, mid = (r[0] + r[1]) / 2; if ((v >> bit) & 1) r[0] = mid; else r[1] = mid; even = !even; } }
+    return { s: latR[0], n: latR[1], w: lngR[0], e: lngR[1] };
+  }
+
+  // ---------- web mercator (map maths, 256 px tiles) ----------
+  const MERC_MAX = 85.05112878;
+  const lngToX = (lng, z) => (lng + 180) / 360 * 256 * Math.pow(2, z);
+  const latToY = (lat, z) => { const l = Math.max(-MERC_MAX, Math.min(MERC_MAX, lat)) * Math.PI / 180; return (1 - Math.log(Math.tan(l) + 1 / Math.cos(l)) / Math.PI) / 2 * 256 * Math.pow(2, z); };
+  const xToLng = (x, z) => x / (256 * Math.pow(2, z)) * 360 - 180;
+  const yToLat = (y, z) => { const n = Math.PI - 2 * Math.PI * y / (256 * Math.pow(2, z)); return 180 / Math.PI * Math.atan(Math.sinh(n)); };
+  const metersPerPx = (lat, z) => 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+
+  // ---------- wild Litterbugs on the map ----------
+  // Deterministic: every ~150 m map cell (geohash 7) may hold one Litterbug per 15-minute slot, the same for every player.
+  // Nothing about the player's location is ever sent to the server: the server only checks species, daily limit and energy.
+  const WILD_POOL = ['cupkraken', 'bottlebrute', 'styroslime', 'bagghost', 'strawsnake'];
+  function hash32(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+  const wildSlot = ms => Math.floor(ms / C.WILD_SLOT_MS);
+  function cellSpawn(cell, slot) {
+    if (hash32(cell + ':' + slot) % 100 >= C.WILD_CHANCE) return null;
+    const b = cellBounds(cell); if (!b) return null;
+    const h = hash32(cell + '#' + slot), h2 = hash32(slot + '@' + cell);
+    const fy = 0.15 + 0.7 * ((h & 0xffff) / 65535), fx = 0.15 + 0.7 * ((h2 & 0xffff) / 65535);
+    return { id: cell + ':' + slot, cell, slot, litter: WILD_POOL[(h >>> 16) % WILD_POOL.length], lat: b.s + (b.n - b.s) * fy, lng: b.w + (b.e - b.w) * fx, ends: (slot + 1) * C.WILD_SLOT_MS };
+  }
+  function wildNear(lat, lng, now, radiusM) {
+    radiusM = radiusM || C.WILD_SCAN_M;
+    const slot = wildSlot(now), here = { lat, lng }, out = [], seen = new Set();
+    const b0 = cellBounds(geohash(lat, lng, 7)), dLat = b0.n - b0.s, dLng = b0.e - b0.w;
+    const nLat = Math.ceil(radiusM / 111320 / dLat) + 1, nLng = Math.ceil(radiusM / (111320 * Math.cos(lat * Math.PI / 180)) / dLng) + 1;
+    for (let i = -nLat; i <= nLat; i++) for (let j = -nLng; j <= nLng; j++) {
+      const cell = geohash(lat + i * dLat, lng + j * dLng, 7); if (seen.has(cell)) continue; seen.add(cell);
+      const sp = cellSpawn(cell, slot); if (!sp) continue;
+      sp.dist = distanceM(here, sp); if (sp.dist <= radiusM) out.push(sp);
+    }
+    return out.sort((a, c) => a.dist - c.dist);
+  }
+  function wildLevel(p) { const ls = p.team.filter(id => p.dex[id]).map(id => p.dex[id].level); if (!ls.length) return 2; return Math.max(2, Math.min(C.MAX_LEVEL, Math.round(ls.reduce((a, c) => a + c, 0) / ls.length))); }
+  function wildToday(p, now) { const t = adnOf(now); return p.wild && p.wild.adn === t ? p.wild.n : 0; }
+  function startWild(p, litter, now, seed) {
+    if (!WILD_POOL.includes(litter)) return { error: 'wild' };
+    if (!p.team.length) return { error: 'team' };
+    if (wildToday(p, now) >= C.WILD_PER_DAY) return { error: 'wildlimit' };
+    if (p.energy < 1) return { error: 'energy' };
+    p.energy--; const t = adnOf(now); p.wild = { adn: t, n: wildToday(p, now) + 1 };
+    const bt = { mode: 'pve', wild: true, ai: null, fi: null, boss: false, tutorial: false, seed: seed >>> 0, allies: p.team.map(id => unitFromDex(p, id, 'ally')), enemies: [litterUnit(litter, wildLevel(p))], a: 0, e: 0, turn: 0, over: false, result: null, cleaned: 0 };
+    bt.allies[0].used = true; return bt;
+  }
+  function finishWild(p, bt) {
+    const out = { result: bt.result, xp: 0, scrap: 0, levelUps: [] };
+    p.litterCleaned += bt.cleaned;
+    out.xp = bt.enemies.filter(e => e.hp <= 0).reduce((s, e) => s + e.level * 6, 0);
+    if (out.xp) p.team.forEach(id => out.levelUps.push(...addXP(p, id, out.xp)));
+    if (bt.result === 'win') { p.battlesWon++; out.scrap = C.WILD_SCRAP; p.scrap += out.scrap; }
+    return out;
+  }
   function distanceM(a, c) { const R = 6371000, r = Math.PI / 180, dLat = (c.lat - a.lat) * r, dLng = (c.lng - a.lng) * r; const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(c.lat * r) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); }
   function bearingDeg(a, c) { const r = Math.PI / 180, y = Math.sin((c.lng - a.lng) * r) * Math.cos(c.lat * r), x = Math.cos(a.lat * r) * Math.sin(c.lat * r) - Math.sin(a.lat * r) * Math.cos(c.lat * r) * Math.cos((c.lng - a.lng) * r); return (Math.atan2(y, x) / r + 360) % 360; }
 
-  // ---------- safe generated names (no free text = no personal info, no bad words) ----------
+  // ---------- random names (players can also type their own; see checkName below) ----------
   const NAME_A = ['Brave', 'Chill', 'Swift', 'Sunny', 'Lucky', 'Mighty', 'Clever', 'Jolly', 'Zippy', 'Calm', 'Bold', 'Witty', 'Shiok', 'Steady', 'Bright', 'Cosy'];
   const NAME_B = ['Sipsy', 'Drippet', 'Tapao', 'Totelet', 'Strawbit', 'Canny', 'Kopicat', 'Binbin', 'Otter', 'Durian', 'Kaya', 'Satay', 'Pandan', 'Prata', 'Chendol', 'Kueh'];
   function makeName(rng) { return NAME_A[Math.floor(rng() * NAME_A.length)] + ' ' + NAME_B[Math.floor(rng() * NAME_B.length)] + ' ' + (100 + Math.floor(rng() * 900)); }
   const validName = n => { if (typeof n !== 'string') return false; const m = n.match(/^(\w+) (\w+) (\d{3})$/); return !!m && NAME_A.includes(m[1]) && NAME_B.includes(m[2]); };
+  // ---------- player-chosen names: limits + word filter (the server enforces the same rules) ----------
+  const NAME_MIN = 3, NAME_MAX = 20, NAME_MAX_DIGITS = 4;
+  const NAME_ERR = {
+    empty: 'Type a name or pick one of the suggestions.',
+    length: 'Use ' + NAME_MIN + ' to ' + NAME_MAX + ' characters.',
+    chars: 'Use letters, numbers and single spaces only.',
+    letters: 'Include at least 2 letters.',
+    digits: 'Use at most ' + NAME_MAX_DIGITS + ' numbers, so nobody shares a phone number or ID.',
+    blocked: 'That name isn\u2019t allowed. Try something else.',
+    reserved: 'That name could be mistaken for staff or the game. Try something else.',
+    taken: 'Someone already has that name. Try another, or add a number.',
+    cooldown: 'You can change your name once every 7 days.'
+  };
+  // Words blocked anywhere inside a name (after removing spaces, repeated letters and look-alike numbers/symbols).
+  // Only words that don't hide inside normal words go here (e.g. not "rape": grape; not "meth": something).
+  const BLOCK_ANY = ['fuck', 'fck', 'phuck', 'shit', 'cunt', 'bitch', 'biatch', 'nigger', 'nigga', 'faggot', 'retard', 'whore', 'slut', 'pussy', 'penis', 'vagina', 'boob', 'porn', 'hitler', 'bastard', 'motherf', 'asshole', 'arsehole', 'dildo', 'naked', 'kanina', 'kannina', 'chibai', 'cheebye', 'cheebai', 'lanjiao', 'lanjio', 'lancheow', 'pukimak', 'butoh', 'nabeh', 'kanineh', 'cibai', 'jibai', 'sohai', 'diulei', 'kimak', 'suicide', 'killyourself', 'terrorist', 'jihad', 'cocaine'];
+  // Short or ambiguous words blocked only as a whole word (so "Grape Kaya", "Peacock" or "Passion Fruit" are fine).
+  const BLOCK_WORD = ['ass', 'arse', 'cum', 'tit', 'tits', 'fag', 'fags', 'hoe', 'hoes', 'fuk', 'fak', 'fack', 'fcuk', 'fuq', 'niga', 'dick', 'cock', 'sex', 'sexy', 'rape', 'nazi', 'kkk', 'wank', 'horny', 'nude', 'nudes', 'puki', 'kys', 'isis', 'heroin', 'weed', 'meth', 'knn', 'ccb', 'cb', 'nb', 'lj', 'diu', 'babi', 'die', 'kill', 'drug', 'drugs', 'wtf', 'stfu', 'milf', 'xxx', 'damn', 'hell', 'crap', 'piss', 'prick', 'twat', 'jerk'];
+  // Could be mistaken for staff, the game or bots.
+  // Checked across two neighbouring words, e.g. "lan jiao", "chee bye", "ka ni na".
+  const BLOCK_SPLIT = ['fuck', 'kanina', 'chibai', 'cheebye', 'cheebai', 'lanjiao', 'lanjio', 'lancheow', 'pukimak', 'cibai', 'jibai', 'diulei', 'nabeh', 'kanineh'];
+  // Real words that happen to contain a blocked word.
+  const ALLOW = ['shiitake', 'scunthorpe', 'cocktail', 'cockatoo', 'peacock', 'hancock', 'dickson', 'dickens'];
+  const RESERVED = ['admin', 'administrator', 'moderator', 'mod', 'staff', 'official', 'support', 'mamashop', 'skippies', 'skippy', 'system', 'bot', 'practice', 'sp staff', 'nea', 'police', 'gov'];
+  const LEET = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '8': 'b', '9': 'g', '@': 'a', '$': 's', '!': 'i', '|': 'i' };
+  const cleanName = n => String(n == null ? '' : n).normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const nameKey = n => cleanName(n).toLowerCase(); // for "already taken" checks
+  function nameProblem(raw) {
+    const n = cleanName(raw);
+    if (!n) return 'empty';
+    if (n.length < NAME_MIN || n.length > NAME_MAX) return 'length';
+    if (!/^[A-Za-z0-9 ]+$/.test(n)) return 'chars';
+    if ((n.match(/[A-Za-z]/g) || []).length < 2) return 'letters';
+    if ((n.match(/\d/g) || []).length > NAME_MAX_DIGITS) return 'digits';
+    const lower = n.toLowerCase();
+    const deleet = s => s.split('').map(c => LEET[c] || c).join('');
+    const squash = s => s.replace(/(.)\1+/g, '$1');
+    // Check word by word (so "Bamboo Bear" never matches across the space). Pure-number words are skipped
+    // so "Bob 455" isn't read as "Bob ass". Spaced-out letters ("f u c k") are joined back together first.
+    const toks = lower.split(' ');
+    const units = [];
+    for (let i = 0; i < toks.length; i++) {
+      if (toks[i].length === 1 && i + 1 < toks.length && toks[i + 1].length === 1) {
+        let run = ''; while (i < toks.length && toks[i].length === 1) run += toks[i++]; i--; units.push(run);
+      } else units.push(toks[i]);
+    }
+    const words = [];
+    units.forEach(u => { if (/^\d+$/.test(u)) return; words.push(deleet(u)); const t = u.replace(/^\d+|\d+$/g, ''); if (t && t !== u) words.push(deleet(t)); });
+    // "fuuuck" -> "fuck": also compare squashed letters, but only for block words that survive squashing
+    // (squashing "boob" gives "bob", which would wrongly block names like "Bobby").
+    // Local swear words are often split into two words ("lan jiao"), so also check each pair of neighbouring words.
+    for (let i = 0; i + 1 < words.length; i++) { const pair = words[i] + words[i + 1]; if (BLOCK_SPLIT.some(k => squash(pair).includes(squash(k)))) return 'blocked'; }
+    const hitAny = w => !ALLOW.includes(w) && BLOCK_ANY.some(k => w.includes(k) || ((squash(k) === k || squash(k).length >= 5) && squash(w).includes(squash(k))));
+    if (words.some(w => hitAny(w) || BLOCK_WORD.includes(w) || BLOCK_WORD.includes(squash(w)))) return 'blocked';
+    const joined = words.join('');
+    const wordsSq = words.join(' ');
+    if (RESERVED.some(r => r.includes(' ') ? wordsSq.includes(r) : words.includes(r) || words.includes(r + 's'))) return 'reserved';
+    if (/^(skipp|mamashop|admin)/.test(joined)) return 'reserved';
+    return null;
+  }
+  const checkName = raw => { const p = nameProblem(raw); return p ? { ok: false, reason: p, message: NAME_ERR[p] } : { ok: true, name: cleanName(raw) }; };
   function makeCode(rng) { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 6; i++) s += A[Math.floor(rng() * A.length)]; return s; }
 
   // ---------- player state ----------
@@ -169,7 +289,7 @@
       v: SAVE_V, id, name: makeName(rng), friendCode: makeCode(rng), created: now, bot: false, zone: null,
       season: 1, startAdn: adnOf(now), actions: [], dex: {}, team: [], buddy: null,
       energy: C.DAILY_ENERGY, dailyAdn: adnOf(now), scrap: C.DAILY_SCRAP, mileage: {}, pity: 0, rolls: 0,
-      areas: AREAS.map(() => ({ progress: 0 })), litterCleaned: 0, battlesWon: 0, tutorialDone: false, finished: false,
+      areas: AREAS.map(() => ({ progress: 0 })), wild: { adn: adnOf(now), n: 0 }, litterCleaned: 0, battlesWon: 0, tutorialDone: false, finished: false,
       arena: { rating: C.ARENA_START, wins: 0, losses: 0 }, rewardCode: null, rewardSeason: null, rinsed: {}, lastActionTs: 0,
       reminders: { byo: '07:15', recycleDow: 6, recycleTime: '10:00' }
     };
@@ -482,8 +602,9 @@
 
   root.G = {
     VERSION, SAVE_V, DAY, HOUR, MIN, C, TYPES, PVP_CYCLE, TYPE_MOVE, TYPE_POWER, UTIL, ITEMS, BYO_ITEMS, RECYCLE_ITEMS, RARITY, RARITY_KEYS, SPECIES, SP, EGG_POOL, STAR_COST,
-    LITTER, AREAS, mulberry32, adnOf, sgHour, sgDow, weekStart, ymdOf, clone, dhash, hamming, validHash, lowDetail, geohash, validZone, zoneNeighbors, nearZone, distanceM, bearingDeg,
-    makeName, validName, makeCode, NAME_A, NAME_B, newPlayer, seasonDay, claimDaily, verifiedActions, actionsToday, actionDaysAll, seasonActionDays, ecoScore,
+    LITTER, AREAS, mulberry32, adnOf, sgHour, sgDow, weekStart, ymdOf, clone, dhash, hamming, validHash, lowDetail, geohash, validZone, zoneNeighbors, nearZone, cellBounds, lngToX, latToY, xToLng, yToLat, metersPerPx,
+    WILD_POOL, hash32, wildSlot, cellSpawn, wildNear, wildLevel, wildToday, startWild, finishWild, distanceM, bearingDeg,
+    makeName, validName, checkName, cleanName, nameKey, NAME_ERR, NAME_MIN, NAME_MAX, makeCode, NAME_A, NAME_B, newPlayer, seasonDay, claimDaily, verifiedActions, actionsToday, actionDaysAll, seasonActionDays, ecoScore,
     addCopy, mergeCost, merge, evoStage, nextEvoStars, xpNeed, addXP, train, mileageBonus, calcStats, statsOf, power, nameOf, rollRarity, rollSpecies, effectiveOdds,
     validateAction, doAction, logSelfReport, rinse, newSeason, setTeam, areaUnlocked, lockReason, fightList, eff, unitFromDex, startCampaign, startArena,
     act, replay, finishCampaign, elo, finishArena, makeBot, hhmm, icsDaily, icsWeekly

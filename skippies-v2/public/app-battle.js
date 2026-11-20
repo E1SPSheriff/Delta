@@ -89,12 +89,18 @@
     if (r.status !== 200) return SK.toast(SK.errMsg(r), 'alert');
     begin('arena', r.body);
   }
+  let wildSpawn = null;
+  SK.startWild = async function (spawn) {
+    const r = await SK.call('POST', '/api/wild/start', { litter: spawn.litter });
+    if (r.status !== 200) { SK.toast(SK.errMsg(r), 'alert'); return r; }
+    wildSpawn = spawn; begin('wild', r.body); return r;
+  };
   function snapshot(b) { return { a: b.allies.map(x => ({ hp: x.hp })), e: b.enemies.map(x => ({ hp: x.hp, type: x.curType || x.type })), ai: b.a, ei: b.e, log: '', fx: null }; }
   function begin(kind, body) {
     const bt = G.clone(body.battle);
     B = { kind, ticket: body.ticket, bt, rng: G.mulberry32(bt.seed), actions: [] };
     view = snapshot(bt); busy = false;
-    view.log = kind === 'arena' ? `${bt.oppName.replace(' (practice bot)', '')}\u2019s team wants to battle.` : bt.boss ? `${bt.enemies[0].name} blocks the way.` : `${bt.enemies.map(e => e.name).join(' and ')} appeared.`;
+    view.log = kind === 'arena' ? `${bt.oppName.replace(' (practice bot)', '')}\u2019s team wants to battle.` : kind === 'wild' ? `A wild ${bt.enemies[0].name} appeared.` : bt.boss ? `${bt.enemies[0].name} blocks the way.` : `${bt.enemies.map(e => e.name).join(' and ')} appeared.`;
     renderBattle(); SK.announce(view.log);
   }
   SK.inBattle = () => !!B;
@@ -109,7 +115,7 @@
     const eArt = E.litter ? Art.litter(LITTER[E.id], { size: 140, type: eType }) : Art.skippy(SP[E.id], { size: 140, stage: E.stage, mood: 'ok' });
     const sw = b.allies.some((x, k) => k !== view.ai && view.a[k].hp > 0);
     SK.$app.innerHTML = `<div class="battle dark">
-      <div class="bt-top"><span class="label tnum">${pvp ? 'Arena' : (b.boss ? 'Boss' : 'Stage ' + (b.fi + 1)) + ' \u00b7 ' + esc(AREAS[b.ai].name)} \u00b7 Turn ${b.turn + 1}</span><button class="icon-btn" id="run" ${busy ? 'disabled' : ''} aria-label="Walk away">${ic('flag', 22)}</button></div>
+      <div class="bt-top"><span class="label tnum">${pvp ? 'Arena' : b.wild ? 'Wild Litterbug' : (b.boss ? 'Boss' : 'Stage ' + (b.fi + 1)) + ' \u00b7 ' + esc(AREAS[b.ai].name)} \u00b7 Turn ${b.turn + 1}</span><button class="icon-btn" id="run" ${busy ? 'disabled' : ''} aria-label="Walk away">${ic('flag', 22)}</button></div>
       <div class="field-b">
         <div class="combatant foe ${fxc('enemy')}"><div class="hpcard"><div class="flex between"><span class="nm">${esc(E.name.replace(' (practice bot)', ''))}</span><span class="hpn">Lv ${E.level}</span></div>
           <div class="flex between">${SK.typeChip(eType)}<span class="hpn">${eHp} / ${E.maxHp}</span></div>${hpBar(eHp, E.maxHp, E.name + ' HP')}
@@ -165,11 +171,14 @@
     B = null;
     if (r.status !== 200) { SK.render(); SK.toast(SK.errMsg(r, 'That battle couldn\u2019t be verified.'), 'alert'); return; }
     const res = r.body.result, win = res.result === 'win';
+    if (kind === 'wild' && win && wildSpawn && SK.markWildDone) SK.markWildDone(wildSpawn);
+    const spawnDone = wildSpawn; wildSpawn = null;
     SK.dark(true); SK.vibrate(win ? [30, 50, 80] : 40);
     const lv = (res.levelUps || []);
     SK.$app.innerHTML = `<div class="flow dark"><div class="flow-body center">
-      <p class="label">${kind === 'arena' ? 'Arena result' : esc(AREAS[ai].name)}</p>
+      <p class="label">${kind === 'arena' ? 'Arena result' : kind === 'wild' ? 'Wild Litterbug' : esc(AREAS[ai].name)}</p>
       <h1 class="display">${win ? (kind === 'arena' ? 'Victory' : 'Cleaned up') : res.result === 'lose' ? 'Not this time' : 'Walked away'}</h1>
+      ${kind === 'wild' && win && spawnDone ? `<p class="muted">You cleaned up the ${esc(G.LITTER[spawnDone.litter].name)} near you. It\u2019s gone from your map.</p>` : ''}
       <div class="flex" style="justify-content:center;gap:4px">${SK.st.team.map(id => SK.art(id, { size: 84, mood: win ? 'happy' : 'ok' })).join('')}</div>
       <div class="group" style="text-align:left;background:var(--dark-2);box-shadow:none;color:var(--dark-text)">
         ${kind === 'arena' ? `<div class="row" style="color:inherit"><span class="grow">Rating</span><span class="trail tnum" style="color:inherit">${res.delta >= 0 ? '+' : ''}${res.delta} \u2192 ${SK.fmt(res.rating)}</span></div>` : ''}
@@ -182,7 +191,7 @@
       ${!win ? '<p class="muted">Tips: merge duplicates for stars, train with scrap, use same-type attacks, and BYO more for habit mileage.</p>' : ''}
       </div><div class="flow-foot"><button class="btn btn-accent btn-block" id="cont">Continue</button></div></div>`;
     SK.announce(win ? 'Victory' : 'Battle over');
-    SK.on('cont', () => { if (kind === 'campaign' && ai != null) areaScreen(ai); else { opps = null; SK.render(); } });
+    SK.on('cont', () => { if (kind === 'campaign' && ai != null) areaScreen(ai); else if (kind === 'wild') { SK.tab = 'radar'; SK.render(); } else { opps = null; SK.render(); } });
   }
   SK._battleTest = { startCampaign, startArena, doAct, get B() { return B; }, get busy() { return busy; } };
 })(typeof window !== 'undefined' ? window : globalThis);
