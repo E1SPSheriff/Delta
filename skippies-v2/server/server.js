@@ -46,7 +46,7 @@ function makeHandler({ api, vapid, allowOrigin, rateLimit }) {
       req.on('error', () => { });
       return;
     }
-    if (p === '/config.js') return send(res, 200, Buffer.from('window.SKIPPIES_SERVER = location.origin;\n'), { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    if (p === '/config.js') return send(res, 200, Buffer.from("window.SKIPPIES_SERVER = location.origin;\nwindow.MAMASHOP_REWARDS_URL = window.MAMASHOP_REWARDS_URL || 'https://e1spsheriff.github.io/DELTA-LOYALTY-APP/';\n"), { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
     // static files (no directory traversal)
     let rel = decodeURIComponent(p); if (rel.endsWith('/')) rel += 'index.html';
     const file = path.normalize(path.join(PUBLIC, rel));
