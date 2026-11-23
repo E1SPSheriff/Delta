@@ -110,7 +110,7 @@ async function playBattle(maxTurns) {
 }
 
 (async () => {
-  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js']) {
+  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js']) {
     if (f === 'config.js' && MODE === 'online') continue; // server serves its own config.js
     loadScript(f);
   }
@@ -155,7 +155,7 @@ async function playBattle(maxTurns) {
 
   // battle tab before any skippy
   noEmoji('home empty');
-  ok(all('.tab').length === 5 && sel('.tab[aria-current="page"]').textContent.includes('Home'), 'tab bar with active Home');
+  ok(all('.tab').length === 6 && sel('.tab[aria-current="page"]').textContent.includes('Home'), 'tab bar with active Home');
   await click($('pill-en'), 'energy pill'); ok(txt().includes('Each battle uses 1 energy'), 'energy explainer'); await closeSheet();
   await click($('pill-sc'), 'scrap pill'); ok(txt().includes('train Skippies'), 'scrap explainer'); await closeSheet();
   await click(sel('[data-tab="battle"]'), 'battle tab'); ok(txt().includes('No team yet'), 'battle gated until first hatch');

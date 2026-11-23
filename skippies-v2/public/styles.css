@@ -55,7 +55,7 @@ a{color:var(--brand)}
 .pill .ic.en{color:var(--ink);fill:var(--accent)}
 .offline-bar{display:flex;align-items:center;gap:8px;margin:0 var(--gutter) 8px;padding:8px 12px;border-radius:var(--r-sm);background:var(--warn-bg);color:var(--warn-ink);font-size:13px;line-height:18px;font-weight:600}
 .main{padding:8px var(--gutter) calc(var(--tabbar) + var(--sab) + 32px)}
-.tabbar{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:100%;max-width:480px;z-index:30;display:grid;grid-template-columns:repeat(5,1fr);background:var(--surface);border-top:1px solid var(--line);padding-bottom:var(--sab)}
+.tabbar{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:100%;max-width:480px;z-index:30;display:grid;grid-template-columns:repeat(6,1fr);background:var(--surface);border-top:1px solid var(--line);padding-bottom:var(--sab)}
 .tab{appearance:none;border:0;background:none;font:inherit;height:var(--tabbar);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--text-2);font-size:12px;line-height:16px;font-weight:600;cursor:pointer;position:relative}
 .tab[aria-current="page"]{color:var(--brand);font-weight:700}
 .tab[aria-current="page"]::before{content:"";position:absolute;top:6px;width:32px;height:4px;border-radius:2px;background:var(--brand)}
@@ -325,6 +325,7 @@ table.lbt{width:100%;border-collapse:collapse}
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
 @media (min-width:520px){.app{box-shadow:0 0 0 1px var(--line)}}
+.rewards-frame{width:100%;height:calc(100vh - var(--appbar) - var(--sat) - var(--tabbar) - var(--sab));height:calc(100dvh - var(--appbar) - var(--sat) - var(--tabbar) - var(--sab));min-height:480px;border:0;border-radius:var(--r-md);background:var(--surface);display:block}
 [hidden]{display:none!important}
 .bob{animation:bob 2.4s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}

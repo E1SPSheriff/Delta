@@ -19,7 +19,7 @@ ok(!/<script>(?!\s*<\/script>)/.test(html) && !/ on[a-z]+="/.test(html), 'no inl
 for (const f of fs.readdirSync(PUB).filter(f => f.startsWith('app-'))) ok(!/ on(click|load|error|change)=\\?"/.test(fs.readFileSync(path.join(PUB, f), 'utf8')), 'no inline handlers in ' + f);
 // design rules: no emoji in any UI source; every icon referenced exists; every colour in CSS outside :root comes from tokens or known palettes
 const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B50}\u{2705}]/u;
-for (const f of ['index.html', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-social.js', 'icons.js', 'styles.css', 'api.js']) {
+for (const f of ['index.html', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-social.js', 'app-rewards.js', 'icons.js', 'styles.css', 'api.js']) {
   const src = fs.readFileSync(path.join(PUB, f), 'utf8'), m = src.match(EMOJI); ok(!m, 'no emoji in ' + f + (m ? ': ' + m[0] : ''));
 }
 vm.runInThisContext(fs.readFileSync(path.join(PUB, 'icons.js'), 'utf8'));

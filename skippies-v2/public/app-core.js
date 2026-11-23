@@ -146,7 +146,7 @@
   SK.wipe = () => { LS.del(K_TOKEN + SK.mode); if (SK.mode === 'local') { LS.del(K_LOCAL); localApi = null; } LS.del(K_MODE); SK.mode = SERVER ? null : 'local'; SK.st = null; };
 
   // ---------- shell ----------
-  const TABS = [['home', 'home', 'Home'], ['dex', 'dex', 'Dex'], ['battle', 'battle', 'Battle'], ['ranks', 'ranks', 'Ranks'], ['radar', 'map', 'Map']];
+  const TABS = [['home', 'home', 'Home'], ['dex', 'dex', 'Dex'], ['battle', 'battle', 'Battle'], ['ranks', 'ranks', 'Ranks'], ['radar', 'map', 'Map'], ['rewards', 'trophy', 'Rewards']];
   SK.views = {}; SK.binders = {};
   SK.render = function () {
     SK.clearTimers(); if (SK.stopCam) SK.stopCam(); if (SK.stopMap) SK.stopMap(); SK.dark(false);
