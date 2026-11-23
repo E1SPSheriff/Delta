@@ -325,7 +325,6 @@ table.lbt{width:100%;border-collapse:collapse}
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
 @media (min-width:520px){.app{box-shadow:0 0 0 1px var(--line)}}
-.rewards-frame{width:100%;height:calc(100vh - var(--appbar) - var(--sat) - var(--tabbar) - var(--sab));height:calc(100dvh - var(--appbar) - var(--sat) - var(--tabbar) - var(--sab));min-height:480px;border:0;border-radius:var(--r-md);background:var(--surface);display:block}
 [hidden]{display:none!important}
 .bob{animation:bob 2.4s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}

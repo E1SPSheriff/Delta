@@ -47,7 +47,7 @@
       <section class="section" aria-label="Season">
         <div class="section-head"><span class="label tnum">Season ${s.season} \u00b7 ${over ? 'ended' : left + (left === 1 ? ' day' : ' days') + ' left'}</span><button class="btn btn-ghost btn-sm" id="seasoninfo" style="min-height:32px;padding:0 4px">Details</button></div>
         <div class="goal" role="img" aria-label="${days} of ${C.STAR_DAYS} BYO days">${goal}</div>
-        ${s.rewardCode ? `<div class="banner reward mt12">${ic('trophy', 20)}<span><b>MamaShop reward unlocked.</b> Show this code and your reusable at MamaShop:<br><span class="code" style="font-size:20px">${esc(s.rewardCode)}</span><br><a class="body2" href="${esc(root.MAMASHOP_REWARDS_URL || './rewards/')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px">Open Mamashop Rewards</a></span></div>`
+        ${s.rewardCode ? `<div class="banner reward mt12">${ic('trophy', 20)}<span><b>MamaShop reward unlocked.</b> Show this code and your reusable at MamaShop:<br><span class="code" style="font-size:20px">${esc(s.rewardCode)}</span></span></div>`
         : `<p class="body2 mt8"><b class="tnum">${days} of ${C.STAR_DAYS}</b> BYO days. ${Math.max(0, C.STAR_DAYS - days)} more for a MamaShop reward.</p>`}
       </section>
       <section class="section" aria-label="Today">

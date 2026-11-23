@@ -110,7 +110,7 @@ async function playBattle(maxTurns) {
 }
 
 (async () => {
-  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js']) {
+  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js']) {
     if (f === 'config.js' && MODE === 'online') continue; // server serves its own config.js
     loadScript(f);
   }
