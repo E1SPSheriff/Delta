@@ -86,7 +86,7 @@
       </div>
       <div class="section-head mt24"><span class="label">About</span></div>
       <div class="group">
-        <a class="row" href="${esc(root.MAMASHOP_REWARDS_URL || 'https://e1spsheriff.github.io/DELTA-LOYALTY-APP/')}" target="_blank" rel="noopener"><span class="lead">${ic('trophy', 20)}</span><span class="grow"><span class="title">Mamashop Rewards</span><br><span class="meta">View points, tiers and rewards</span></span>${ic('next', 20)}</a>
+        <a class="row" href="${esc(root.MAMASHOP_REWARDS_URL || './rewards/')}" target="_blank" rel="noopener"><span class="lead">${ic('trophy', 20)}</span><span class="grow"><span class="title">Mamashop Rewards</span><br><span class="meta">View points, tiers and rewards</span></span>${ic('next', 20)}</a>
         <button class="row" id="hows"><span class="lead">${ic('camera', 20)}</span><span class="grow title">How scans work</span>${ic('next', 20)}</button>
         <button class="row" id="oddsl"><span class="lead">${ic('egg', 20)}</span><span class="grow title">Egg odds</span>${ic('next', 20)}</button>
         <button class="row" id="privacy"><span class="lead">${ic('shield', 20)}</span><span class="grow title">Privacy</span>${ic('next', 20)}</button>

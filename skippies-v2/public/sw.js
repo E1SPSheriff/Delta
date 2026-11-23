@@ -1,6 +1,6 @@
 /* SKIPPIES service worker: offline app shell, cached scanner model, push reminders. Bump VERSION each release. */
 const VERSION = 'skippies-v2.3.0';
-const SHELL = ['./', './index.html', './styles.css', './engine.js', './api.js', './art.js', './icons.js', './app-core.js', './app-home.js', './app-dex.js', './app-battle.js', './app-map.js', './app-social.js', './manifest.webmanifest', './data/recycling-points.json',
+const SHELL = ['./', './index.html', './styles.css', './engine.js', './api.js', './art.js', './icons.js', './app-core.js', './app-home.js', './app-dex.js', './app-battle.js', './app-map.js', './app-social.js', './app-rewards.js', './rewards/index.html', './manifest.webmanifest', './data/recycling-points.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 const RUNTIME = 'skippies-runtime-v2';
 
