@@ -1,6 +1,6 @@
 /* SKIPPIES service worker: offline app shell, cached scanner model, push reminders. Bump VERSION each release. */
 const VERSION = 'skippies-v2.3.1';
-const SHELL = ['./', './index.html', './styles.css', './engine.js', './api.js', './art.js', './icons.js', './app-core.js', './app-home.js', './app-dex.js', './app-battle.js', './app-map.js', './app-social.js', './app-rewards.js', './manifest.webmanifest', './data/recycling-points.json',
+const SHELL = ['./', './index.html', './styles.css', './engine.js', './api.js', './art.js', './icons.js', './app-core.js', './app-home.js', './app-dex.js', './app-battle.js', './app-map.js', './app-social.js', './app-rewards.js', './logos/mamashop-rewards-icon.png', './logos/mamashop-rewards-icon.svg', './logos/mamashop-rewards-logo.png', './logos/mamashop-rewards-logo.svg', './logos/skippies-icon.png', './logos/skippies-icon.svg', './logos/skippies-logo.png', './logos/skippies-logo.svg', './manifest.webmanifest', './data/recycling-points.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 const RUNTIME = 'skippies-runtime-v2';
 
