@@ -1,6 +1,7 @@
 // SKIPPIES v2 server: static files + JSON API + reminder scheduler. Zero npm dependencies (Node >= 22.5).
 // Env: PORT (default 8080), DB_FILE (default ./skippies.db), VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY,
-//      VAPID_SUBJECT (e.g. mailto:team@example.com), ALLOW_ORIGIN (optional, for a separate frontend host)
+//      VAPID_SUBJECT (e.g. mailto:team@example.com), ALLOW_ORIGIN (optional, for a separate frontend host),
+//      TRUST_PROXY=1 with TRUSTED_PROXIES (comma-separated) only when deployed behind your own proxy
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
 const recyclingData = require('./tools/fetch-recycling-data.js');
 require('../public/engine.js');
@@ -13,15 +14,38 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 const SECURITY = {
   'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'strict-origin-when-cross-origin', 'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(self), geolocation=(self), microphone=()',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com https://tfhub.dev https://www.kaggle.com; img-src 'self' data: blob: https://www.onemap.gov.sg; style-src 'self' 'unsafe-inline'; media-src 'self' blob: mediastream:; worker-src 'self' blob:; frame-ancestors 'none'"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' data: blob: https://www.onemap.gov.sg; img-src 'self' data: blob: https://www.onemap.gov.sg; style-src 'self' 'unsafe-inline'; media-src 'self' blob: mediastream:; worker-src 'self' blob:; frame-ancestors 'none'"
 };
 
-function makeHandler({ api, vapid, allowOrigin, rateLimit }) {
-  const hits = new Map(); const limit = rateLimit || 120;
-  function limited(ip) {
-    const t = Math.floor(Date.now() / 60000), k = ip + ':' + t, n = (hits.get(k) || 0) + 1; hits.set(k, n);
+const LIMITS = { default: 120, action: 20, register: 10, arena: 30, capture: 30, rewards: 20, name: 20 };
+function makeHandler({ api, vapid, allowOrigin, rateLimit, trustedProxies }) {
+  const hits = new Map(), limit = rateLimit || LIMITS.default;
+  const trusted = Array.isArray(trustedProxies) ? trustedProxies : [];
+  const cleanIp = s => typeof s === 'string' && /^[0-9a-fA-F:.]{1,45}$/.test(s) ? s.replace(/^::ffff:/, '') : null;
+  function clientIp(req) {
+    const socketIp = cleanIp(req.socket && req.socket.remoteAddress) || 'unknown';
+    if (!trusted.length || !req.headers) return socketIp;
+    const raw = req.headers['x-forwarded-for'];
+    if (typeof raw !== 'string') return socketIp;
+    const chain = raw.split(',').map(cleanIp).filter(Boolean).reverse();
+    if (!chain.length) return socketIp;
+    for (let i = 0; i < chain.length; i++) if (!trusted.includes(chain[i])) return chain[i];
+    return chain[chain.length - 1] || socketIp;
+  }
+  function bucketFor(method, path) {
+    if (path === '/api/register') return 'register';
+    if (path === '/api/action' || path === '/api/selfreport') return 'action';
+    if (path.startsWith('/api/arena')) return 'arena';
+    if (path.startsWith('/api/capture')) return 'capture';
+    if (path.startsWith('/api/rewards')) return 'rewards';
+    if (path.startsWith('/api/name')) return 'name';
+    return 'default';
+  }
+  function limited(ip, bucket) {
+    const t = Math.floor(Date.now() / 60000), max = bucket === 'default' ? limit : (LIMITS[bucket] || limit), k = ip + ':' + bucket + ':' + t, n = (hits.get(k) || 0) + 1;
+    hits.set(k, n);
     if (hits.size > 5000) for (const key of hits.keys()) if (!key.endsWith(':' + t)) hits.delete(key);
-    return n > limit;
+    return n > max;
   }
   function send(res, status, body, headers) {
     const isBuf = Buffer.isBuffer(body), data = isBuf ? body : JSON.stringify(body);
@@ -33,22 +57,34 @@ function makeHandler({ api, vapid, allowOrigin, rateLimit }) {
     const cors = allowOrigin ? { 'Access-Control-Allow-Origin': allowOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', Vary: 'Origin' } : {};
     if (req.method === 'OPTIONS') return send(res, 204, Buffer.alloc(0), cors);
     if (p.startsWith('/api/')) {
-      const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || 'x';
-      if (limited(ip)) return send(res, 429, { error: 'rate', message: 'Too many requests. Try again in a minute.' }, cors);
+      const ip = clientIp(req);
+      if (limited(ip, bucketFor((req.method || 'GET').toUpperCase(), p))) return send(res, 429, { error: 'rate', message: 'Too many requests. Try again in a minute.' }, Object.assign({}, cors, { 'Retry-After': '60' }));
       if (p === '/api/push/key' && req.method === 'GET') return send(res, 200, { publicKey: vapid ? vapid.publicKey : null }, cors);
-      let size = 0; const chunks = [];
-      req.on('data', c => { size += c.length; if (size > 16384) { req.destroy(); } else chunks.push(c); });
+      let size = 0, tooLarge = false; const chunks = [];
+      req.on('data', c => {
+        if (tooLarge) return;
+        size += c.length;
+        if (size > 16384) { tooLarge = true; send(res, 413, { error: 'toolarge', message: 'Request too large.' }, Object.assign({}, cors, { Connection: 'close' })); req.resume(); return; }
+        chunks.push(c);
+      });
       req.on('end', async () => {
-        if (size > 16384) return;
-        const r = await api.handle({ method: req.method, path: url, headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
-        send(res, r.status, r.body, cors);
+        if (tooLarge || res.writableEnded) return;
+        try {
+          const r = await api.handle({ method: req.method, path: url, headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
+          send(res, r.status, r.body, cors);
+        } catch (e) {
+          console.error('[http]', e);
+          if (!res.writableEnded) send(res, 500, { error: 'server' }, cors);
+        }
       });
       req.on('error', () => { });
       return;
     }
     if (p === '/config.js') return send(res, 200, Buffer.from('window.SKIPPIES_SERVER = location.origin;\n'), { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
     // static files (no directory traversal)
-    let rel = decodeURIComponent(p); if (rel.endsWith('/')) rel += 'index.html';
+    let rel;
+    try { rel = decodeURIComponent(p); } catch (e) { return send(res, 400, { error: 'badurl' }); }
+    if (rel.endsWith('/')) rel += 'index.html';
     const file = path.normalize(path.join(PUBLIC, rel));
     if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, { error: 'forbidden' });
     fs.stat(file, (se, st) => {
@@ -88,7 +124,10 @@ async function main() {
   });
   const vapid = await loadVapid(store), subject = process.env.VAPID_SUBJECT || 'mailto:skippies@example.com';
   if (!process.env.VAPID_SUBJECT) console.warn('[push] Set VAPID_SUBJECT=mailto:your-team@email so push services (especially Apple) accept reminders.');
-  const server = http.createServer(makeHandler({ api, vapid, allowOrigin: process.env.ALLOW_ORIGIN }));
+  const trustedProxies = process.env.TRUST_PROXY === '1'
+    ? (process.env.TRUSTED_PROXIES || '127.0.0.1,::1,::ffff:127.0.0.1').split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  const server = http.createServer(makeHandler({ api, vapid, allowOrigin: process.env.ALLOW_ORIGIN, trustedProxies }));
   const where = process.env.SOCKET || (+process.env.PORT || 8080);
   server.listen(where, () => console.log(`SKIPPIES v${G.VERSION} listening on ${typeof where === 'string' ? where : 'http://localhost:' + where}`));
   // Recycling map data: download automatically if missing or older than 30 days (needs internet on the server).

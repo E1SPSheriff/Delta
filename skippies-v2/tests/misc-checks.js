@@ -30,16 +30,41 @@ for (const f of fs.readdirSync(PUB).filter(f => f.startsWith('app-'))) {
 ok(Object.values(Icon.ITEM).concat(Object.values(Icon.TYPE)).every(n => Icon.names.includes(n)), 'item/type icons exist');
 const css = fs.readFileSync(path.join(PUB, 'styles.css'), 'utf8');
 ok(/--brand:#1E6B4F/.test(css) && /prefers-reduced-motion/.test(css) && /safe-area-inset-bottom/.test(css), 'css has tokens, reduced motion and safe areas');
-// service worker shell files exist
+// release version is single-sourced
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+const versionSrc = fs.readFileSync(path.join(PUB, 'version.js'), 'utf8');
+const release = versionSrc.match(/'(\d+\.\d+\.\d+)'/)[1];
+ok(pkg.version === release, 'package version matches public/version.js: ' + release);
+ok(html.indexOf('version.js') < html.indexOf('engine.js'), 'index.html loads version.js before engine.js');
+ok(html.indexOf('audio.js') < html.indexOf('app-core.js'), 'index.html loads audio.js before app-core.js');
+// service worker shell files exist and use local scanner assets
 const sw = fs.readFileSync(path.join(PUB, 'sw.js'), 'utf8');
 for (const [, f] of sw.match(/SHELL = \[([\s\S]*?)\];/)[1].matchAll(/'\.\/([^']*)'/g)) if (f) ok(fs.existsSync(path.join(PUB, f)), 'sw shell file exists: ' + f);
+for (const f of ['vendor/tfjs/tf.min.js', 'vendor/tfjs/coco-ssd.min.js', 'vendor/coco/model.json', 'vendor/coco/group1-shard1of5']) ok(sw.includes('./' + f), 'sw caches local scanner asset: ' + f);
+ok(!/cdn\.jsdelivr|tfhub|storage\.googleapis/.test(sw + fs.readFileSync(path.join(PUB, 'app-home.js'), 'utf8')), 'scanner uses local assets only');
 // manifest icons exist
 const man = JSON.parse(fs.readFileSync(path.join(PUB, 'manifest.webmanifest'), 'utf8'));
 man.icons.forEach(i => ok(fs.existsSync(path.join(PUB, i.src)), 'icon ' + i.src));
 // species names must not reuse well-known Pokemon names (spot list)
+vm.runInThisContext(versionSrc);
 vm.runInThisContext(fs.readFileSync(path.join(PUB, 'engine.js'), 'utf8'));
+ok(G.VERSION === release, 'engine VERSION uses public/version.js');
 const banned = ['pikachu', 'squirtle', 'bulbasaur', 'charmander', 'eevee', 'jigglypuff', 'meowth', 'psyduck', 'snorlax', 'mew', 'trubbish', 'garbodor', 'grimer', 'muk', 'voltorb', 'pokemon', 'pokémon', 'pokeball', 'merlion'];
 const names = G.SPECIES.flatMap(s => s.stages).map(n => n.toLowerCase());
+{ // hostile ids and old/corrupt saves are normalized without prototype pollution
+  const first = G.SPECIES[0].id, raw = { id: 'hostile', dex: Object.create(null), team: ['__proto__', 'constructor', first], buddy: '__proto__', mileage: Object.create(null), rinsed: Object.create(null), pushSent: Object.create(null), actions: [{ item: '__proto__', adn: 1, ts: 1 }], arena: { rating: 99999, lastOppId: '__proto__' } };
+  raw.dex['__proto__'] = { stars: 99 }; raw.dex[first] = { stars: 2, copies: 1, level: 1 };
+  raw.mileage['__proto__'] = 99999; raw.rinsed['__proto__'] = true; raw.pushSent['__proto__'] = 999;
+  const p = G.sanitizePlayer(raw, 86400000);
+  ok(!!p && Object.getPrototypeOf(p.dex) === null && Object.getPrototypeOf(p.mileage) === null, 'sanitize keeps null-prototype maps');
+  ok(Object.keys(p.dex).join() === first, 'hostile species ids are dropped');
+  ok(!Object.keys(p.mileage).includes('__proto__') && !Object.keys(p.rinsed).includes('__proto__') && !Object.keys(p.pushSent).includes('__proto__'), 'hostile map keys are dropped');
+  ok(p.team.length === 1 && p.team[0] === first && p.buddy === first, 'team and buddy use only owned valid species');
+  ok(p.actions.length === 0 && p.arena.rating <= 5000 && p.arena.lastOppId === null, 'hostile actions and arena ids are clamped');
+  const old = G.sanitizePlayer({ id: 'old', actions: null, dex: null, arena: null }, 86400000);
+  ok(!!old && old.v === 5 && old.arena && Array.isArray(old.claims) && old.capture === null && !!old.reminders.byo, 'old/corrupt saves gain current defaults');
+  ok(G.sanitizePlayer({ id: '__proto__' }, 0) === null, 'hostile player id is rejected');
+}
 { // published effective odds match a 300k-egg simulation (within 0.3 points) and sum to 100
   const eo = G.effectiveOdds(), p = G.newPlayer('x', 0, Math.random), c = {}, N = 300000;
   for (let i = 0; i < N; i++) { const r = G.rollRarity(p, Math.random); c[r] = (c[r] || 0) + 1; }
@@ -63,7 +88,8 @@ ok(!names.some(n => banned.some(b => n.split(/\s+/).includes(b) || n === b)), 'n
 (async () => {
   const L = {}, shown = [], opened = [];
   const self = { addEventListener: (t, f) => { L[t] = f; }, registration: { showNotification: async (t, o) => shown.push({ t, o }) }, clients: { matchAll: async () => [], openWindow: async u => opened.push(u), claim: async () => { } }, skipWaiting: () => { } };
-  vm.runInNewContext(sw, { self, caches: {}, fetch: () => { }, location: { origin: 'https://s.test' }, URL, Promise, console });
+  const importScripts = () => { self.SKIPPIES_RELEASE = release; };
+  vm.runInNewContext(sw, { self, caches: {}, fetch: () => { }, location: { origin: 'https://s.test' }, URL, Promise, console, importScripts });
   ok(['install', 'activate', 'fetch', 'push', 'notificationclick'].every(k => L[k]), 'sw registers all handlers');
   let wait; L.push({ data: { json: () => ({ title: 'Skippies 🎒', body: 'Grab your reusable', tag: 'byo' }) }, waitUntil: p => { wait = p; } }); await wait;
   ok(shown.length === 1 && shown[0].t === 'Skippies 🎒' && shown[0].o.tag === 'byo', 'push shows notification');

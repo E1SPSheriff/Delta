@@ -23,19 +23,27 @@
       notdetected: 'The scanner didn\u2019t spot that item. Hold it clearly in the frame and try again.',
       duplicate: 'That photo looks like one already used. Take a new photo of a new BYO or recycling moment.',
       lowdetail: 'That photo is too dark or blank. Try again in better light.',
-      name: 'That name can\u2019t be used. Try another.', taken: G.NAME_ERR.taken, namecooldown: 'You can change your name once every 7 days.'
+      name: 'That name can\u2019t be used. Try another.', taken: G.NAME_ERR.taken, namecooldown: 'You can change your name once every 7 days.',
+      daily: 'That\u2019s your 5 ranked matches for today. Practice matches are still available.', repeat: 'That rematch is on cooldown. Try another opponent for 20 minutes.', self: 'Pick another opponent.',
+      scanner: 'Start a fresh camera check and try again.', missing: 'That reward isn\u2019t available.', expired: 'That check expired. Start a fresh one.'
     };
+    const SAFE_REWARDS = ['MamaShop sticker', 'MamaShop wallpaper', 'MamaShop badge'];
+    const chain = { p: Promise.resolve() };
+    async function locked(fn) { const prev = chain.p, run = prev.then(fn, fn); chain.p = run.catch(() => {}); return run; }
+    function cleanPlayer(x) { const c = G.sanitizePlayer(x, now()); return c || null; }
 
     async function seedBots() {
       if (await store.get('meta', 'bots')) return;
-      for (let i = 0; i < BOTS; i++) await store.put('players', 'bot-' + i, G.makeBot(i, now()));
+      for (let i = 0; i < BOTS; i++) await store.put('players', 'bot-' + i, cleanPlayer(G.makeBot(i, now())));
       await store.put('meta', 'bots', { n: BOTS });
     }
     async function auth(req) {
       const h = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
       const m = /^Bearer ([0-9a-f]{64})$/.exec(h); if (!m) return null;
-      const t = await store.get('tokens', await sha256(m[1])); if (!t) return null;
-      const p = await store.get('players', t.playerId); if (!p) return null;
+      const t = await store.get('tokens', await sha256(m[1])); if (!t || typeof t.playerId !== 'string') return null;
+      const raw = await store.get('players', t.playerId); const p = cleanPlayer(raw); if (!p) return null;
+      if (p.id !== t.playerId) return null;
+      if (JSON.stringify(p) !== JSON.stringify(raw)) await store.put('players', p.id, p);
       if (G.claimDaily(p, now())) await store.put('players', p.id, p);
       return p;
     }
@@ -45,10 +53,11 @@
       return s;
     }
     function teamCard(p, me) {
+      const team = Array.isArray(p.team) ? p.team.filter(id => p.dex && p.dex[id] && G.SP[id]).slice(0, G.C.TEAM_MAX) : [];
       return {
         id: p.id, name: p.name, bot: !!p.bot, rating: p.arena.rating, near: !!(me && G.nearZone(me.zone, p.zone)),
-        power: p.team.reduce((s, id) => s + G.power(p, id), 0),
-        team: p.team.map(id => ({ id, name: G.nameOf(p, id), level: p.dex[id].level, stars: p.dex[id].stars, stage: p.dex[id].stage, type: G.SP[id].type, rarity: G.SP[id].rarity }))
+        power: team.reduce((s, id) => s + G.power(p, id), 0),
+        team: team.map(id => ({ id, name: G.nameOf(p, id), level: p.dex[id].level, stars: p.dex[id].stars, stage: p.dex[id].stage, type: G.SP[id].type, rarity: G.SP[id].rarity }))
       };
     }
     async function isDuplicate(p, hash) {
@@ -59,9 +68,14 @@
       }
       return false;
     }
-    function q(path) { const i = path.indexOf('?'); const out = {}; if (i < 0) return out; for (const kv of path.slice(i + 1).split('&')) { const [k, v] = kv.split('='); if (k) out[decodeURIComponent(k)] = decodeURIComponent(v || ''); } return out; }
+    function q(path) {
+      const out = {}, dec = s => { try { return decodeURIComponent(s); } catch (e) { return ''; } }, i = path.indexOf('?');
+      if (i < 0) return out;
+      for (const kv of path.slice(i + 1).split('&')) { const [k, v] = kv.split('='); if (k) { const key = dec(k); if (key) out[key] = dec(v || ''); } }
+      return out;
+    }
 
-    async function handle(req) {
+    async function handleInner(req) {
       try {
         const method = (req.method || 'GET').toUpperCase(), full = req.path || '/', path = full.split('?')[0], query = q(full);
         let body = req.body; if (typeof body === 'string' && body) { try { body = JSON.parse(body); } catch (e) { return err(400, 'bad json'); } }
@@ -73,7 +87,7 @@
         if (method === 'GET' && path === '/api/name-check') { // live "is this name free?" hint; the real check happens on save
           const c = G.checkName(query.name); if (!c.ok) return ok({ ok: false, reason: c.reason, message: c.message });
           const me = await auth(req), key = G.nameKey(c.name);
-          const taken = (await store.list('players')).some(x => !x.bot && (!me || x.id !== me.id) && G.nameKey(x.name) === key);
+          const taken = (await store.list('players')).map(cleanPlayer).some(x => x && !x.bot && (!me || x.id !== me.id) && G.nameKey(x.name) === key);
           return ok(taken ? { ok: false, reason: 'taken', message: G.NAME_ERR.taken } : { ok: true, name: c.name });
         }
         if (method === 'POST' && path === '/api/register') {
@@ -95,11 +109,16 @@
 
         if (method === 'POST' && path === '/api/action') {
           const pre = G.validateAction(p, now(), body); if (pre) return err(400, pre, { message: ERR_TEXT[pre] });
+          if (p.capture) {
+            if (p.capture.expires <= now()) p.capture = null;
+            else if (typeof body.nonce !== 'string' || body.nonce !== p.capture.nonce) return err(400, 'scanner', { message: ERR_TEXT.scanner });
+          }
           const bits = G.hamming(body.hash, '0000000000000000');
           if (body.lowDetail === true || bits < 4 || bits > 60) return err(400, 'lowdetail', { message: ERR_TEXT.lowdetail });
           if (await isDuplicate(p, body.hash)) return err(409, 'duplicate', { message: ERR_TEXT.duplicate });
           const r = G.doAction(p, now(), { item: body.item, hash: body.hash, detected: body.detected, together: !!body.together, family: !!body.family }, rng);
           if (!r.ok) return err(400, r.reason, { message: ERR_TEXT[r.reason] });
+          p.capture = null;
           await store.put('hashes', randomHex(8), { playerId: p.id, hash: body.hash, ts: now() });
           await save(); return ok({ result: r, state: pub(p) });
         }
@@ -108,7 +127,7 @@
         if (method === 'POST' && path === '/api/merge') { const r = G.merge(p, body.id); if (!r.ok) return err(400, r.reason, r); await save(); return ok({ result: r, state: pub(p) }); }
         if (method === 'POST' && path === '/api/train') { const r = G.train(p, body.id, body.scrap); if (!r.ok) return err(400, r.reason); await save(); return ok({ result: r, state: pub(p) }); }
         if (method === 'POST' && path === '/api/team') { if (!G.setTeam(p, body.ids)) return err(400, 'team'); await save(); return ok({ state: pub(p) }); }
-        if (method === 'POST' && path === '/api/buddy') { if (!p.dex[body.id]) return err(400, 'missing'); p.buddy = body.id; await save(); return ok({ state: pub(p) }); }
+        if (method === 'POST' && path === '/api/buddy') { if (!p.dex || !p.dex[body.id] || !G.SP[body.id]) return err(400, 'missing'); p.buddy = body.id; await save(); return ok({ state: pub(p) }); }
         if (method === 'POST' && path === '/api/name') {
           const c = G.checkName(body.name);
           if (!c.ok) return err(400, 'name', { reason: c.reason, message: c.message });
@@ -116,7 +135,7 @@
           const next = p.nameSetAt ? p.nameSetAt + G.C.NAME_COOLDOWN_DAYS * G.DAY : 0;
           if (next > now()) return err(403, 'namecooldown', { next, message: 'You can change your name again on ' + G.ymdOf(next) + '.' });
           const key = G.nameKey(c.name);
-          if ((await store.list('players')).some(x => !x.bot && x.id !== p.id && G.nameKey(x.name) === key)) return err(409, 'taken', { message: G.NAME_ERR.taken });
+          if ((await store.list('players')).map(cleanPlayer).some(x => x && !x.bot && x.id !== p.id && G.nameKey(x.name) === key)) return err(409, 'taken', { message: G.NAME_ERR.taken });
           p.name = c.name; p.nameSetAt = now(); await save(); return ok({ state: pub(p) });
         }
         if (method === 'PUT' && path === '/api/zone') { if (!G.validZone(body.zone)) return err(400, 'zone'); p.zone = body.zone; await save(); return ok({ state: pub(p) }); }
@@ -135,6 +154,43 @@
         }
         if (method === 'DELETE' && path === '/api/push') { delete p.push; await save(); return ok({ state: pub(p), push: false }); }
         if (method === 'GET' && path === '/api/push/status') return ok({ push: !!p.push });
+
+        if (method === 'GET' && path === '/api/habits') return ok({ habit: G.habitStats(p, now()), reusable: G.reusableStats(p, now()) });
+        if (method === 'POST' && path === '/api/identity/reusable') {
+          const c = G.checkName(body.nickname); if (!c.ok) return err(400, 'name', { message: c.message });
+          p.reusable = p.reusable || {}; p.reusable.nickname = c.name; await save();
+          return ok({ nickname: p.reusable.nickname, state: pub(p) });
+        }
+        if (method === 'GET' && path === '/api/season/recap') return ok({ recap: G.seasonRecap(p, now()), daysLeft: Math.max(0, G.C.SEASON_DAYS - G.seasonDay(p, now())) });
+
+        if (method === 'POST' && path === '/api/capture/challenge') {
+          const nonce = randomHex(12), expires = now() + 5 * 60000;
+          p.capture = { nonce, expires }; await save();
+          return ok({ nonce, expires, hint: 'Hold your reusable or recycling item in view. This check works without uploading a photo.' });
+        }
+
+        if (method === 'GET' && path === '/api/rewards/claim') {
+          const existing = p.claims.find(c => c.season === p.season && c.status === 'active') || null;
+          return ok({ eligible: G.seasonActionDays(p) >= G.C.STAR_DAYS, season: p.season, claim: existing });
+        }
+        if (method === 'POST' && path === '/api/rewards/claim') {
+          const existing = p.claims.find(c => c.season === p.season && c.status === 'active');
+          if (existing) return ok({ claim: existing, state: pub(p) });
+          if (G.seasonActionDays(p) < G.C.STAR_DAYS || !p.rewardCode || p.rewardSeason !== p.season) return err(403, 'ineligible', { message: 'Complete ' + G.C.STAR_DAYS + ' real BYO/recycling days this season first.' });
+          const codeHash = await sha256(p.rewardCode + ':' + p.id + ':' + p.rewardSeason);
+          const claim = { id: randomHex(8), codeHash, reward: SAFE_REWARDS[parseInt(codeHash.slice(0, 2), 16) % SAFE_REWARDS.length], created: now(), status: 'active', redeemedAt: null, season: p.season };
+          const key = p.id + '_' + p.season;
+          const saved = store.take ? await store.take('claims', key, old => old || claim) : (await store.put('claims', key, claim), claim);
+          p.claims.push(saved); await save(); return ok({ claim: saved, state: pub(p) });
+        }
+        if (method === 'POST' && path === '/api/rewards/redeem') {
+          const claim = p.claims.find(c => c.id === body.id && c.status === 'active');
+          if (!claim) return err(404, 'missing', { message: ERR_TEXT.missing });
+          claim.status = 'redeemed'; claim.redeemedAt = now();
+          if (store.take) await store.take('claims', p.id + '_' + claim.season, old => old && old.id === claim.id ? claim : old);
+          else await store.put('claims', p.id + ':' + claim.season, claim);
+          await save(); return ok({ claim, state: pub(p) });
+        }
 
         if (method === 'POST' && path === '/api/campaign/start') {
           const bt = G.startCampaign(p, body.area, body.fight, Math.floor(rng() * 4294967295)); if (bt.error) return err(400, bt.error);
@@ -155,13 +211,13 @@
           const rp = G.replay(t.start, body.actions); if (rp.error) return err(400, 'replay', { detail: rp.error });
           if (kind === 'campaign') { const r = G.finishCampaign(p, rp.battle); await save(); return ok({ result: r, state: pub(p) }); }
           if (kind === 'wild') { const r = G.finishWild(p, rp.battle); await save(); return ok({ result: r, state: pub(p) }); }
-          const opp = await store.get('players', t.start.oppId); if (!opp) { await save(); return ok({ result: { result: rp.battle.result, delta: 0, rating: p.arena.rating, xp: 0, scrap: 0, levelUps: [] }, state: pub(p) }); }
-          const r = G.finishArena(p, opp, rp.battle); await save(); if (!opp.bot) await store.put('players', opp.id, opp);
+          const opp = cleanPlayer(await store.get('players', t.start.oppId)); if (!opp) { await save(); return ok({ result: { result: rp.battle.result, ranked: false, delta: 0, rating: p.arena.rating, xp: 0, scrap: 0, levelUps: [] }, state: pub(p) }); }
+          const r = G.finishArena(p, opp, rp.battle, now()); await save(); if (!opp.bot) await store.put('players', opp.id, opp);
           return ok({ result: r, state: pub(p) });
         }
         if (method === 'GET' && path === '/api/arena/opponents') {
           await seedBots();
-          const all = (await store.list('players')).filter(x => x.id !== p.id && x.team && x.team.length);
+          const all = (await store.list('players')).map(cleanPlayer).filter(x => x && x.id !== p.id && x.team && x.team.length);
           const near = x => G.nearZone(p.zone, x.zone);
           const real = all.filter(x => !x.bot).sort((a, c) => (near(c) - near(a)) || Math.abs(a.arena.rating - p.arena.rating) - Math.abs(c.arena.rating - p.arena.rating)).slice(0, 5);
           const bots = all.filter(x => x.bot).sort((a, c) => Math.abs(a.arena.rating - p.arena.rating) - Math.abs(c.arena.rating - p.arena.rating)).slice(0, Math.max(2, 5 - real.length));
@@ -170,13 +226,14 @@
         if (method === 'GET' && path.startsWith('/api/arena/code/')) {
           const code = path.slice('/api/arena/code/'.length).toUpperCase();
           if (!/^[A-Z2-9]{6}$/.test(code)) return err(400, 'code');
-          const o = (await store.list('players')).find(x => x.friendCode === code && !x.bot);
+          const o = (await store.list('players')).map(cleanPlayer).find(x => x && x.friendCode === code && !x.bot);
           if (!o || o.id === p.id || !o.team.length) return err(404, 'notfound'); return ok({ opponent: teamCard(o, p) });
         }
         if (method === 'POST' && path === '/api/arena/start') {
-          const opp = typeof body.oppId === 'string' && await store.get('players', body.oppId);
+          const opp = typeof body.oppId === 'string' && cleanPlayer(await store.get('players', body.oppId));
           if (!opp || opp.id === p.id) return err(404, 'notfound');
-          const bt = G.startArena(p, opp, Math.floor(rng() * 4294967295)); if (bt.error) return err(400, bt.error);
+          const bt = G.startArena(p, opp, Math.floor(rng() * 4294967295), now(), { ranked: body.ranked !== false });
+          if (bt.error) return err(400, bt.error, { message: ERR_TEXT[bt.error] || 'That match isn\u2019t available right now.' });
           const ticket = randomHex(12); await store.put('tickets', ticket, { playerId: p.id, kind: 'arena', start: bt, created: now() });
           await save(); return ok({ ticket, battle: bt, state: pub(p) });
         }
@@ -186,7 +243,7 @@
           if (scope === 'zone' && !p.zone) return err(400, 'nozone');
           const wk = G.weekStart(G.adnOf(now()));
           const score = x => board === 'arena' ? x.arena.rating : board === 'eco' ? G.ecoScore(x) : G.ecoScore(x, wk);
-          let ps = (await store.list('players')).filter(x => !x.bot && (scope === 'global' || G.nearZone(p.zone, x.zone)));
+          let ps = (await store.list('players')).map(cleanPlayer).filter(x => x && !x.bot && (scope === 'global' || G.nearZone(p.zone, x.zone)));
           if (board === 'arena') ps = ps.filter(x => x.arena.wins + x.arena.losses > 0 || x.id === p.id);
           const rows = ps.map(x => ({ id: x.id, name: x.name, score: score(x) })).sort((a, c) => c.score - a.score || (a.id < c.id ? -1 : 1));
           let rank = 0, prev = null; rows.forEach((r, i) => { if (r.score !== prev) { rank = i + 1; prev = r.score; } r.rank = rank; });
@@ -202,14 +259,16 @@
         return err(404, 'not found');
       } catch (e) {
         if (opts.onError) opts.onError(e);
-        return err(500, 'server');
+        return err(e && e.status ? e.status : 500, e && e.status ? 'bad request' : 'server');
       }
     }
+    async function handle(req) { return locked(() => handleInner(req)); }
 
     // Reminders that are due now (server scheduler calls this every minute). Marks them as sent.
     async function dueReminders() {
       const t = now(), adn = G.adnOf(t), mins = Math.floor(((t + 8 * G.HOUR) % G.DAY) / 60000), dow = G.sgDow(t), out = [];
-      for (const p of await store.list('players')) {
+      for (const raw of await store.list('players')) {
+        const p = cleanPlayer(raw); if (!p) continue;
         if (!p.push || p.bot) continue;
         p.pushSent = p.pushSent || {}; let changed = false;
         const byo = G.hhmm(p.reminders.byo);
@@ -220,7 +279,7 @@
       }
       return out;
     }
-    async function dropPush(playerId) { const p = await store.get('players', playerId); if (p && p.push) { delete p.push; await store.put('players', p.id, p); } }
+    async function dropPush(playerId) { const p = cleanPlayer(await store.get('players', playerId)); if (p && p.push) { delete p.push; await store.put('players', p.id, p); } }
     async function cleanup() { const t = now(); let n = 0; for (const [id, k] of await store.entries('tickets')) if (t - k.created > TICKET_TTL) { await store.del('tickets', id); n++; } return n; }
 
     return { handle, dueReminders, dropPush, cleanup };
@@ -228,14 +287,27 @@
 
   // Simple in-memory/localStorage store for the browser (offline mode) and tests.
   function createMemoryStore(persist) {
-    let data = {};
-    if (persist && persist.load) { try { data = persist.load() || {}; } catch (e) { data = {}; } }
-    const col = c => (data[c] = data[c] || {});
+    const safeKey = k => typeof k === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(k) && k !== '__proto__' && k !== 'prototype' && k !== 'constructor';
+    let data = Object.create(null);
+    if (persist && persist.load) {
+      try {
+        const old = persist.load() || {};
+        for (const k of Object.keys(old)) if (safeKey(k)) data[k] = old[k] && typeof old[k] === 'object' ? Object.assign(Object.create(null), old[k]) : old[k];
+      } catch (e) { data = Object.create(null); }
+    }
+    const col = c => (data[c] = data[c] || Object.create(null));
     const flush = () => { if (persist && persist.save) persist.save(data); };
     return {
-      async get(c, id) { const v = col(c)[id]; return v === undefined ? null : JSON.parse(JSON.stringify(v)); },
-      async put(c, id, v) { col(c)[id] = JSON.parse(JSON.stringify(v)); flush(); },
-      async del(c, id) { delete col(c)[id]; flush(); },
+      async get(c, id) { if (!safeKey(id)) return null; const v = col(c)[id]; return v === undefined ? null : JSON.parse(JSON.stringify(v)); },
+      async put(c, id, v) { if (!safeKey(c) || !safeKey(id)) return; col(c)[id] = JSON.parse(JSON.stringify(v)); flush(); },
+      async del(c, id) { if (safeKey(id)) { delete col(c)[id]; flush(); } },
+      async take(c, id, fn) {
+        if (!safeKey(c) || !safeKey(id)) return null;
+        const old = col(c)[id] === undefined ? null : JSON.parse(JSON.stringify(col(c)[id]));
+        const next = await fn(old);
+        if (next === null || next === undefined) delete col(c)[id]; else col(c)[id] = JSON.parse(JSON.stringify(next));
+        flush(); return next;
+      },
       async list(c) { return Object.values(col(c)).map(v => JSON.parse(JSON.stringify(v))); },
       async entries(c) { return Object.entries(col(c)).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]); },
       dump() { return data; }

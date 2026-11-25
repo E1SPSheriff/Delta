@@ -45,7 +45,7 @@ function grid(n) { const r = G.mulberry32(500 + n); return Array.from({ length: 
   const etag = r.headers.etag; r = await req('GET', '/', undefined, { 'If-None-Match': etag });
   ok(r.status === 304, 'ETag gives 304');
   r = await req('GET', '/styles.css', undefined, { 'Accept-Encoding': 'gzip' }); ok(r.status === 200 && /text\/css/.test(r.headers['content-type']) && r.text.includes('--brand'), 'css served');
-  for (const f of ['engine.js', 'api.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'data/recycling-points.json']) {
+  for (const f of ['version.js', 'engine.js', 'api.js', 'art.js', 'icons.js', 'audio.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'data/recycling-points.json', 'vendor/tfjs/tf.min.js', 'vendor/tfjs/coco-ssd.min.js', 'vendor/coco/model.json', 'vendor/coco/group1-shard1of5']) {
     r = await req('GET', '/' + f); ok(r.status === 200, 'served ' + f);
   }
   r = await req('GET', '/config.js'); ok(r.status === 200 && r.text.includes('SKIPPIES_SERVER = location.origin'), 'config.js points the app at this server');

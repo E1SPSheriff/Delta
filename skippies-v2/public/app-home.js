@@ -28,6 +28,7 @@
     let nextArea = -1; for (let i = 0; i < AREAS.length; i++) if (G.areaUnlocked(s, i) && s.areas[i].progress < 4) { nextArea = i; break; }
     const mil = ['drink', 'water', 'food', 'carry', 'cutlery', 'recycle', 'spark'].map(ty => { const v = Math.round(G.mileageBonus(s, ty) * 100); return `<span class="tl">${ic(Icon.TYPE[ty], 16)}${TYPES[ty].name}</span>${SK.bar(v, C.MILEAGE_CAP, '', TYPES[ty].name + ' bonus ' + v + ' percent')}<span class="v">+${v}%</span>`; }).join('');
     const heroCap = (k) => cs.off ? esc(cs.off) : (k === 'byo' ? 'Scan your cup, bottle, box or bag' : 'Cans, bottles, paper or e-waste');
+    const heroWhy = cs.off ? ` aria-disabled="true" title="${esc(cs.off)}" aria-describedby="scanwhy"` : '';
     return `
       ${nudge ? `<div class="banner warn">${ic('bell', 20)}<span><b>No BYO yet today.</b> Grab your reusable on the way out. An egg is waiting.</span></div>` : ''}
       <section class="section center" aria-label="Your buddy" style="margin-top:${nudge ? 16 : 8}px">
@@ -39,15 +40,16 @@
       ${over ? `<section class="section"><div class="banner reward">${ic('trophy', 20)}<span><b>Season ${s.season} is over.</b> You did ${days} BYO day${days === 1 ? '' : 's'}. Your Skippies, stars and levels carry over.</span></div><button class="btn btn-primary btn-block mt12" id="newseason">Start season ${s.season + 1}</button></section>` : `
       <section class="section" aria-label="Log an action" style="margin-top:24px">
         <div class="heroes">
-          <button class="hero byo" id="catch-byo" ${cs.off ? 'disabled' : ''}><span class="icons">${ic('cup', 28)}${ic('bag', 28)}</span><span><span class="hl">I BYO\u2019d</span><br><span class="cap tnum" data-cd>${heroCap('byo')}</span></span></button>
-          <button class="hero rec" id="catch-rec" ${cs.off ? 'disabled' : ''}><span class="icons">${ic('recycle', 28)}</span><span><span class="hl">I recycled</span><br><span class="cap tnum" data-cd>${heroCap('rec')}</span></span></button>
+          <button class="hero byo" id="catch-byo" ${cs.off ? 'disabled' : ''}${heroWhy}><span class="icons">${ic('cup', 28)}${ic('bag', 28)}</span><span><span class="hl">I BYO\u2019d</span><br><span class="cap tnum" data-cd>${heroCap('byo')}</span></span></button>
+          <button class="hero rec" id="catch-rec" ${cs.off ? 'disabled' : ''}${heroWhy}><span class="icons">${ic('recycle', 28)}</span><span><span class="hl">I recycled</span><br><span class="cap tnum" data-cd>${heroCap('rec')}</span></span></button>
         </div>
+        ${cs.off ? `<span class="sr" id="scanwhy">Scanning is unavailable: ${esc(cs.off)}</span>` : ''}
         <div class="flex between mt12 caption tnum"><span>Today: ${todayActs.length}/${C.MAX_ACTIONS_PER_DAY} eggs</span><span>Rare or better within ${toRare} egg${toRare === 1 ? '' : 's'}</span></div>
       </section>`}
       <section class="section" aria-label="Season">
         <div class="section-head"><span class="label tnum">Season ${s.season} \u00b7 ${over ? 'ended' : left + (left === 1 ? ' day' : ' days') + ' left'}</span><button class="btn btn-ghost btn-sm" id="seasoninfo" style="min-height:32px;padding:0 4px">Details</button></div>
         <div class="goal" role="img" aria-label="${days} of ${C.STAR_DAYS} BYO days">${goal}</div>
-        ${s.rewardCode ? `<div class="banner reward mt12">${ic('trophy', 20)}<span><b>MamaShop reward unlocked.</b> Show this code and your reusable at MamaShop:<br><span class="code" style="font-size:20px">${esc(s.rewardCode)}</span></span></div>`
+        ${s.rewardCode ? `<div class="banner reward mt12">${ic('trophy', 20)}<span><b>MamaShop reward unlocked.</b> Open Rewards to issue your claim.</span><button class="btn btn-ghost btn-sm" id="goclaims">Open</button></div>`
         : `<p class="body2 mt8"><b class="tnum">${days} of ${C.STAR_DAYS}</b> BYO days. ${Math.max(0, C.STAR_DAYS - days)} more for a MamaShop reward.</p>`}
       </section>
       <section class="section" aria-label="Today">
@@ -78,7 +80,8 @@
     SK.on('gocampaign', () => { SK.tab = 'battle'; SK.battleSub('campaign'); });
     SK.on('goarena', () => { SK.tab = 'battle'; SK.battleSub('arena'); });
     SK.on('goradar', () => { SK.tab = 'radar'; SK.render(); });
-    SK.on('seasoninfo', () => SK.sheet('Seasons', `<div class="stack"><p>Each season lasts ${C.SEASON_DAYS} days. BYO or recycle on <b>${C.STAR_DAYS} different days</b> to unlock a MamaShop reward code.</p>
+    SK.on('goclaims', () => { SK.tab = 'rewards'; SK.render(); });
+    SK.on('seasoninfo', () => SK.sheet('Seasons', `<div class="stack"><p>Each season lasts ${C.SEASON_DAYS} days. BYO or recycle on <b>${C.STAR_DAYS} different days</b> to unlock a MamaShop reward claim.</p>
       <p>The reward depends only on your days. It never depends on luck or rare Skippies.</p><p class="muted">Your Skippies, stars, levels and rating carry over to the next season.</p></div>`));
     // live cooldown countdown on the hero buttons
     const cs = catchState(SK.st, SK.now());
@@ -107,12 +110,12 @@
           <label class="checkrow"><input type="checkbox" id="tog"><span><b>With a friend</b><br><span class="caption">Both reusables in the photo. Bonus: Kaki Twins</span></span></label>
           <label class="checkrow"><input type="checkbox" id="fam"><span><b>A family member BYO\u2019d too</b><br><span class="caption">Bonus: Mama Bao</span></span></label></div>` : ''}
       </div>
-      <div class="flow-foot"><button class="btn btn-primary btn-block" id="next" disabled>${ic('camera', 20)}Open camera</button></div></div>`;
+      <div class="flow-foot"><button class="btn btn-primary btn-block" id="next" disabled aria-disabled="true" aria-describedby="itemhint" title="Pick an item first">${ic('camera', 20)}Open camera</button></div></div>`;
     SK.$app.querySelectorAll('[data-it]').forEach(b => b.onclick = () => {
       F.item = b.dataset.it; SK.$app.querySelectorAll('[data-it]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false'));
       const it = ITEMS[F.item], h = doc.getElementById('itemhint');
       if (h) h.textContent = it.kind === 'byo' ? 'Skipping ' + it.skip + '. Hatches a ' + TYPES[it.type].name + '-leaning egg.' : 'Take it to ' + it.where + '.';
-      doc.getElementById('next').disabled = false;
+      const next = doc.getElementById('next'); next.disabled = false; next.removeAttribute('aria-disabled'); next.removeAttribute('title');
     });
     SK.on('back', () => SK.render());
     SK.on('next', () => { const t = doc.getElementById('tog'), f = doc.getElementById('fam'); F.together = !!(t && t.checked); F.family = !!(f && f.checked); cameraScreen(); });
@@ -125,24 +128,24 @@
       <div class="flow-body">
         <div class="cam" id="camwrap"><video id="vid" playsinline muted autoplay></video><div class="frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
         <div class="cam-status" id="cs" aria-live="polite">Starting camera\u2026</div>
-        <p class="caption center">Looks for: ${esc(LOOK[F.item])}. Your photo stays on your phone.</p>
+        <p class="caption center">Looks for: ${esc(LOOK[F.item])}. Your photo stays on your phone. Object check only — please scan honestly.</p>
       </div>
-      <div class="flow-foot"><button class="shutter" id="snap" disabled aria-label="Snap and hatch"><i></i></button><button class="btn btn-ghost" id="tips">Can\u2019t scan? Tips</button></div></div>`;
+      <div class="flow-foot"><button class="shutter" id="snap" disabled aria-disabled="true" aria-describedby="cs" aria-label="Snap and hatch" title="Scanner is starting"><i></i></button><button class="btn btn-ghost" id="tips">Can\u2019t scan? Tips</button></div></div>`;
     SK.on('back', () => { SK.stopCam(); SK.catchFlow(F.kind); });
     SK.on('snap', snap);
     SK.on('tips', () => SK.sheet('Scanning tips', `<div class="stack"><p>Hold the item so it fills most of the frame, in good light.</p><p>Plain backgrounds work best. Keep your hand from covering it.</p>
       <p>Snap it where you\u2019re actually using it. Photos that look the same as an earlier one are blocked.</p><p class="muted">Allow camera access when your browser asks. If you said no, turn it back on in your browser\u2019s site settings.</p></div>`));
     startCam();
   }
-  const setCs = (t, ok) => { const el = doc.getElementById('cs'); if (el) el.innerHTML = (ok ? Icon.svg('check', 20) : '') + '<span>' + esc(t) + '</span>'; const w = doc.getElementById('camwrap'); if (w) w.classList.toggle('found', !!ok); };
+  const setCs = (t, ok) => { const el = doc.getElementById('cs'); if (el) el.innerHTML = (ok ? Icon.svg('check', 20) : '') + '<span>' + esc(t) + '</span>'; const w = doc.getElementById('camwrap'); if (w) w.classList.toggle('found', !!ok); const b = doc.getElementById('snap'); if (b) { b.title = t; b.setAttribute('aria-label', 'Snap and hatch. ' + t); } };
   function loadScript(src) { return new Promise((res, rej) => { const s = doc.createElement('script'); s.src = src; s.crossOrigin = 'anonymous'; s.onload = res; s.onerror = rej; doc.head.appendChild(s); }); }
   async function getModel() {
     if (root.__cocoModel) return root.__cocoModel;
     if (!root.cocoSsd) {
-      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
-      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+      await loadScript('vendor/tfjs/tf.min.js');
+      await loadScript('vendor/tfjs/coco-ssd.min.js');
     }
-    root.__cocoModel = await root.cocoSsd.load({ base: 'lite_mobilenet_v2' });
+    root.__cocoModel = await root.cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: 'vendor/coco/model.json' });
     return root.__cocoModel;
   }
   let cam = null;
@@ -171,9 +174,9 @@
           if (m.length) {
             cam.seen = m; cam.seenAt = Date.now();
             setCs(F.together && m.length < 2 ? 'Found one. Show the second one too.' : 'Found it. Tap to snap.', true);
-            if (b && b.disabled) { b.disabled = false; SK.vibrate(20); SK.announce('Item found. Ready to snap.'); }
+            if (b && b.disabled) { b.disabled = false; b.removeAttribute('aria-disabled'); SK.vibrate(20); SK.announce('Item found. Ready to snap.'); }
           } else if (Date.now() - cam.seenAt > 1500) {
-            if (b) b.disabled = true;
+            if (b) { b.disabled = true; b.setAttribute('aria-disabled', 'true'); }
             setCs(Date.now() - cam.start > 8000 ? 'Not found yet. Fill the frame, use good light, or see Tips.' : 'Hold steady\u2026');
           }
         } catch (e) { }
@@ -196,16 +199,18 @@
   }
   async function snap() {
     const v = doc.getElementById('vid'); if (!cam || !v) return;
-    const b = doc.getElementById('snap'); if (b) b.disabled = true;
-    const gray = grayGrid(v), detected = cam.seen.slice();
+    const b = doc.getElementById('snap'); if (b) { b.disabled = true; b.setAttribute('aria-disabled', 'true'); }
+    const gray = grayGrid(v), detected = cam.seen.slice(), flags = { together: F.together, family: F.family };
     SK.stopCam();
-    await SK.submitCapture(F.item, gray, detected, { together: F.together, family: F.family });
+    const challenge = await SK.captureChallenge();
+    if (!challenge) { SK.dark(false); SK.$app.innerHTML = `<div class="flow light-flow"><div class="flow-body center"><h2>Check expired</h2><p class="muted">Start the camera again and try once more.</p></div><div class="flow-foot"><button class="btn btn-primary btn-block" id="again">Try again</button><button class="btn btn-secondary btn-block" id="home">Home</button></div></div>`; SK.on('again', () => cameraScreen()); SK.on('home', () => SK.render()); return; }
+    await SK.submitCapture(F.item, gray, detected, Object.assign(flags, { nonce: challenge.nonce }));
   }
   // Exposed for tests: send a capture (9x8 gray grid + detected classes) and show the result.
   SK.submitCapture = async function (item, gray, detected, flags) {
     flags = flags || {};
     const low = G.lowDetail(gray), hash = G.dhash(gray);
-    const r = await SK.call('POST', '/api/action', { item, hash, detected, together: !!flags.together, family: !!flags.family, lowDetail: low });
+    const r = await SK.call('POST', '/api/action', { item, hash, detected, together: !!flags.together, family: !!flags.family, lowDetail: low, nonce: flags.nonce });
     if (r.status !== 200) {
       SK.dark(false);
       const dup = r.body.error === 'duplicate';
@@ -224,6 +229,7 @@
     const main = res.hatched[0], R = RARITY[main.rarity], big = R.rank >= 2;
     SK.$app.innerHTML = `<div class="flow reveal"><div class="flow-body"><div class="stage" id="eggwrap"><span class="${SK.reduced ? '' : 'egg-anim'}">${Art.egg(150, { label: 'Egg hatching', fill: big ? R.color : '#FBF6EC' })}</span></div><p class="center muted" id="eggtxt">${big ? 'It\u2019s glowing\u2026' : 'Hatching\u2026'}</p></div></div>`;
     SK.vibrate(big ? [20, 60, 20, 60, 80] : 30);
+    if (SK.audio) SK.audio.play(big ? 'rare' : 'hatch');
     SK.later(() => {
       const d = SK.st.dex[main.id], cost = G.mergeCost(SK.st, main.id), extras = res.hatched.slice(1);
       SK.$app.innerHTML = `<div class="flow reveal" aria-live="polite"><div class="flow-body center">
@@ -239,7 +245,7 @@
             <div style="padding:10px 4px;border-left:1px solid var(--line)"><div class="flex" style="justify-content:center;gap:4px">${ic('scrap', 16)}<b>+${res.scrap}</b></div><span class="caption">Scrap</span></div>
             <div style="padding:10px 4px;border-left:1px solid var(--line)"><div class="flex" style="justify-content:center;gap:4px">${ic('leaf', 16)}<b>+1%</b></div><span class="caption">${TYPES[ITEMS[item].type].name}</span></div>
           </div>
-          ${res.reward ? `<div class="banner reward" style="text-align:left">${ic('trophy', 20)}<span><b>MamaShop reward unlocked.</b> Code <span class="code">${esc(res.reward)}</span></span></div>` : ''}
+          ${res.reward ? `<div class="banner reward" style="text-align:left">${ic('trophy', 20)}<span><b>MamaShop reward unlocked.</b> Open Rewards to issue your claim.</span></div>` : ''}
           ${res.kind === 'byo' ? '<p class="caption">After you use it: rinse your reusable and tap \u201cI rinsed\u201d on Home for +1 energy.</p>' : ''}
         </div>
         <div class="flow-foot"><button class="btn btn-primary btn-block" id="done">Done</button><button class="btn btn-ghost" id="viewdex">View in Dex</button></div></div>`;

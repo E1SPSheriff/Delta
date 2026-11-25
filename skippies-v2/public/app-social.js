@@ -71,6 +71,7 @@
       <div class="group">
         <div class="row"><span class="lead" style="background:none">${s.buddy && s.dex[s.buddy] ? SK.art(s.buddy, { size: 40 }) : ic('egg', 20)}</span><span class="grow"><span class="title">${esc(s.name)}</span><br><span class="meta">${local ? 'Offline mode' : 'Online'} \u00b7 season ${s.season}</span></span><button class="btn btn-ghost btn-sm" id="rename">Change</button></div>
         <div class="row"><span class="lead">${ic('users', 20)}</span><span class="grow"><span class="meta">Friend code</span><br><span class="code">${esc(s.friendCode)}</span></span><button class="btn btn-ghost btn-sm" id="copyfc">${ic('copy', 16)}Copy</button></div>
+        <div class="row"><span class="lead">${ic('sparkle', 20)}</span><span class="grow"><span class="meta">Reusable nickname</span><br><span class="title">${esc((s.reusable && s.reusable.nickname) || 'Not set')}</span></span><button class="btn btn-ghost btn-sm" id="reusablenick">Set</button></div>
       </div>
       <div class="section-head mt24"><span class="label">Reminders</span></div>
       <div class="group" style="padding:12px 16px">
@@ -89,11 +90,26 @@
         <button class="row" id="hows"><span class="lead">${ic('camera', 20)}</span><span class="grow title">How scans work</span>${ic('next', 20)}</button>
         <button class="row" id="oddsl"><span class="lead">${ic('egg', 20)}</span><span class="grow title">Egg odds</span>${ic('next', 20)}</button>
         <button class="row" id="privacy"><span class="lead">${ic('shield', 20)}</span><span class="grow title">Privacy</span>${ic('next', 20)}</button>
+        <button class="row" id="help"><span class="lead">${ic('alert', 20)}</span><span class="grow title">Help &amp; recovery</span>${ic('next', 20)}</button>
+        <div class="row"><span class="lead">${ic('sparkle', 20)}</span><span class="grow"><span class="title">Interface sounds</span><br><span class="meta">Small cues for hatches and battles</span></span><label class="toggle"><input type="checkbox" id="soundtog" aria-label="Interface sounds"><i></i></label></div>
       </div>
       <button class="btn btn-ghost btn-block mt16" id="del" style="color:var(--danger-ink)">${ic('trash', 18)}Delete my ${local ? 'game data' : 'account and data'}</button>
       <p class="caption center mt8">SKIPPIES ${G.VERSION} \u00b7 made for MamaShop\u2019s BYO campaign</p>`);
     sh.querySelector('#rename').onclick = () => { close(); SK.pickName(false); };
     sh.querySelector('#copyfc').onclick = () => SK.copy(s.friendCode);
+    sh.querySelector('#reusablenick').onclick = () => {
+      close();
+      const { sh: rn, close: rc } = SK.sheet('Reusable nickname', `<div class="stack"><p class="muted">A short, kind name for your own device and reminders. It stays with this player profile.</p>
+        <label class="field"><span>Nickname</span><input class="input" id="rnick" maxlength="${G.NAME_MAX}" value="${esc((s.reusable && s.reusable.nickname) || '')}" autocomplete="off"></label>
+        <p class="caption" id="rnmsg">${G.NAME_MIN} to ${G.NAME_MAX} letters, numbers or spaces.</p></div>`,
+      { actions: `<button class="btn btn-primary btn-block" id="rnsave">Save nickname</button>` });
+      const input = rn.querySelector('#rnick'), msg = rn.querySelector('#rnmsg');
+      rn.querySelector('#rnsave').onclick = async () => {
+        const r = await SK.call('POST', '/api/identity/reusable', { nickname: input.value });
+        if (r.status !== 200) { msg.textContent = SK.errMsg(r, 'Choose another nickname.'); msg.className = 'caption bad'; return; }
+        rc(); SK.render(); SK.toast('Reusable nickname saved', 'check');
+      };
+    };
     sh.querySelector('#rsave').onclick = async () => {
       const r = await SK.call('POST', '/api/reminders', { byo: sh.querySelector('#rbyo').value, recycleDow: +sh.querySelector('#rdow').value, recycleTime: sh.querySelector('#rtime').value });
       SK.toast(r.status === 200 ? 'Reminder times saved' : 'Enter valid times.', r.status === 200 ? 'check' : 'alert');
@@ -112,6 +128,12 @@
         <p><b>What we never collect:</b> your real name, email, phone number, exact location or photos. There is no chat.</p>
         <p><b>The map</b> uses your location only on this phone. It is never sent to the Skippies server. Map images come from OneMap (Singapore Land Authority), which, like any online map, sees which area of the map you load. You can turn the street map off in Map, Nearby.</p>
         <p><b>Push reminders</b> are optional and you can turn them off any time.</p><p><b>Delete</b> removes your player, sign-in, photo fingerprints and battles from the server.</p></div>`); };
+    sh.querySelector('#help').onclick = () => { close(); SK.recoverySheet(); };
+    const sound = sh.querySelector('#soundtog');
+    if (sound && SK.audio) {
+      sound.checked = !SK.audio.muted();
+      sound.onchange = () => SK.audio.setMuted(!sound.checked);
+    }
     sh.querySelector('#del').onclick = async () => {
       const n = Object.keys(s.dex).length;
       if (!(await SK.confirm('Delete everything?', `Your ${n} Skippie${n === 1 ? '' : 's'}, progress and rankings will be gone for good. This can\u2019t be undone.`, 'Delete', true))) return;

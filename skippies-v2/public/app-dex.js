@@ -60,6 +60,8 @@
     const bonus = Math.round(G.mileageBonus(s, sp.type) * 100), need = G.xpNeed(d.level), inTeam = s.team.includes(id), maxed = d.level >= C.MAX_LEVEL;
     const canMerge = cost != null && d.copies >= cost;
     const mergeWhy = cost == null ? 'Maximum stars reached' : canMerge ? '' : `${cost - d.copies} more cop${cost - d.copies === 1 ? 'y' : 'ies'} needed (have ${d.copies} of ${cost})`;
+ const trainWhy = maxed ? 'Maximum level reached' : s.scrap < C.TRAIN_STEP ? `Need ${C.TRAIN_STEP - s.scrap} more scrap` : '';
+ const train5Why = maxed ? 'Maximum level reached' : s.scrap < C.TRAIN_STEP * 5 ? `Need ${C.TRAIN_STEP * 5 - s.scrap} more scrap for 5 trains` : '';
     const { sh, close } = SK.sheet(SK.nm(id), `
       <div class="hero-tile r-${sp.rarity}">${SK.art(id, { size: 150, bob: !SK.reduced })}</div>
       <div class="flex wrap mt12">${SK.rarityTag(sp.rarity)}${SK.typeChip(sp.type)}${SK.stars(d.stars, 18)}</div>
@@ -77,8 +79,8 @@
         <div class="row"><span class="lead">${ic('leaf', 20)}</span><span class="grow"><span class="title">Habit mileage +${bonus}%</span><br><span class="meta">${sp.type === 'spark' ? 'Grows with all your actions' : 'Grows with your ' + TYPES[sp.type].name + ' actions'}</span></span></div>
       </div>
       ${nx ? `<p class="caption mt12">Evolves at ${nx} stars into ${esc(sp.stages[G.evoStage(sp, nx)])}.</p>` : ''}`,
-      { actions: `<button class="btn btn-primary btn-block" id="merge" ${canMerge ? '' : 'disabled'}>${ic('merge', 20)}${cost == null ? 'Max stars' : 'Merge ' + cost + ' cop' + (cost === 1 ? 'y' : 'ies') + ' \u2192 ' + (d.stars + 1) + ' stars'}</button>${mergeWhy ? `<span class="why">${esc(mergeWhy)}</span>` : ''}
-        <div class="flex mt12"><button class="btn btn-secondary grow" id="train" ${s.scrap < C.TRAIN_STEP || maxed ? 'disabled' : ''}>${ic('scrap', 18)}Train \u00b7 ${C.TRAIN_STEP}</button><button class="btn btn-secondary grow" id="train5" ${s.scrap < C.TRAIN_STEP * 5 || maxed ? 'disabled' : ''}>Train \u00d75 \u00b7 ${C.TRAIN_STEP * 5}</button></div>
+      { actions: `<button class="btn btn-primary btn-block" id="merge" ${canMerge ? '' : 'disabled aria-disabled="true" title="' + esc(mergeWhy) + '"'}>${ic('merge', 20)}${cost == null ? 'Max stars' : 'Merge ' + cost + ' cop' + (cost === 1 ? 'y' : 'ies') + ' \u2192 ' + (d.stars + 1) + ' stars'}</button>${mergeWhy ? `<span class="why">${esc(mergeWhy)}</span>` : ''}
+        <div class="flex mt12"><button class="btn btn-secondary grow" id="train" ${maxed || s.scrap < C.TRAIN_STEP ? 'disabled aria-disabled="true" title="' + esc(trainWhy) + '"' : ''}>${ic('scrap', 18)}Train \u00b7 ${C.TRAIN_STEP}</button><button class="btn btn-secondary grow" id="train5" ${train5Why ? 'disabled aria-disabled="true" title="' + esc(train5Why) + '"' : ''}>Train \u00d75 \u00b7 ${C.TRAIN_STEP * 5}</button></div>${train5Why ? `<span class="why">${esc(train5Why)}</span>` : ''}
         <div class="flex mt8"><button class="btn btn-ghost grow" id="buddy" ${s.buddy === id ? 'disabled' : ''}>${s.buddy === id ? 'Your buddy' : 'Make buddy'}</button><button class="btn btn-ghost grow" id="team">${inTeam ? 'Remove from team' : 'Add to team'}</button></div>` });
     const after = (r, msg) => { if (r.status !== 200) return SK.toast(SK.errMsg(r), 'alert'); close(); SK.render(); if (msg) SK.toast(msg, 'check'); };
     sh.querySelector('#merge').onclick = async () => {

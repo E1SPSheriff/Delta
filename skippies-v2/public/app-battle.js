@@ -32,7 +32,7 @@
           <span class="grow"><span class="title">${esc(o.name.replace(' (practice bot)', ''))}</span><br>
             <span class="flex wrap mt4">${o.bot ? '<span class="badge soft">Practice bot</span>' : `<span class="caption tnum">${ic('trophy', 14).replace('class="ic', 'style="display:inline;vertical-align:-2px" class="ic')} ${SK.fmt(o.rating)}</span>`}${o.near ? `<span class="badge" style="background:var(--brand-tint);color:var(--brand-strong)">Near you</span>` : ''}<span class="caption tnum">Power ${SK.fmt(o.power)}</span></span>
             <span class="flex mt8" style="gap:4px">${o.team.map(t => `<span class="thumb r-${t.rarity}" style="width:44px;height:44px;border-width:1.5px" title="${esc(t.name)} Lv ${t.level}">${Art.skippy(SP[t.id], { size: 36, stage: t.stage })}</span>`).join('')}</span></span>
-          <button class="btn btn-primary btn-sm" data-opp="${i}" ${s.energy < 1 ? 'disabled' : ''} style="align-self:center">${ic('energy', 16)}Battle</button></div>`).join('')}</div>`;
+          <button class="btn btn-primary btn-sm" data-opp="${i}" ${s.energy < 1 ? 'disabled aria-disabled="true" title="Need at least 1 energy"' : ''} style="align-self:center">${ic('energy', 16)}Battle</button></div>`).join('')}</div>`;
     return `<section class="section" style="margin-top:16px"><div class="card flat" style="cursor:default"><span class="lead" style="width:48px;height:48px;border-radius:12px;background:var(--accent-tint);display:grid;place-items:center;color:var(--accent-ink)">${ic('trophy', 24)}</span>
         <span class="grow"><span class="label">Your rating</span><br><span class="display tnum" style="font-size:28px;line-height:32px">${SK.fmt(a.rating)}</span></span><span class="caption tnum" style="text-align:right">${a.wins} won<br>${a.losses} lost</span></div>
         <p class="caption mt8">You battle a saved copy of the other player\u2019s team, so they don\u2019t need to be online. No chat and no exact locations.</p></section>
@@ -72,7 +72,7 @@
         return `<div class="card ${state === 'now' ? 'current' : 'flat'} ${state === 'locked' ? 'locked' : ''}" style="flex-direction:column;align-items:stretch;cursor:default">
           <div class="flex between"><span class="label">${k === 3 ? 'Boss' : 'Stage ' + (k + 1)}</span>${state === 'done' ? `<span class="badge" style="background:var(--ok-bg);color:var(--ok-ink)">Cleared</span>` : ''}</div>
           <div class="flex wrap" style="gap:12px">${f.map(([id, lv]) => `<span class="flex" style="gap:6px">${Art.litter(LITTER[id], { size: 52 })}<span><b style="font-size:15px">${esc(LITTER[id].name)}</b><br><span class="caption tnum">Lv ${lv} \u00b7 ${TYPES[LITTER[id].type].name}</span></span></span>`).join('')}</div>
-          <button class="btn ${state === 'now' ? 'btn-primary' : 'btn-secondary'} btn-block" data-f="${k}" ${state === 'locked' ? 'disabled' : ''}>${state === 'locked' ? 'Clear the previous stage first' : state === 'done' ? 'Replay for XP \u00b7 1 energy' : (free && k === 0 ? 'Fight \u00b7 free' : 'Fight \u00b7 1 energy')}</button></div>`;
+          <button class="btn ${state === 'now' ? 'btn-primary' : 'btn-secondary'} btn-block" data-f="${k}" ${state === 'locked' ? 'disabled aria-disabled="true" title="Clear the previous stage first"' : ''}>${state === 'locked' ? 'Clear the previous stage first' : state === 'done' ? 'Replay for XP \u00b7 1 energy' : (free && k === 0 ? 'Fight \u00b7 free' : 'Fight \u00b7 1 energy')}</button></div>`;
       }).join('')}</div>
       <div class="banner info mt16">${ic('info', 20)}<span>Skippies deal <b>2\u00d7 damage</b> to Litterbugs of the <b>same type</b>. Spark and Recycle Skippies deal 1.25\u00d7 to everything.</span></div></div>`;
     SK.on('back', () => SK.render());
@@ -174,9 +174,11 @@
     if (kind === 'wild' && win && wildSpawn && SK.markWildDone) SK.markWildDone(wildSpawn);
     const spawnDone = wildSpawn; wildSpawn = null;
     SK.dark(true); SK.vibrate(win ? [30, 50, 80] : 40);
+    if (SK.audio) SK.audio.play(win ? 'win' : 'lose');
     const lv = (res.levelUps || []);
     SK.$app.innerHTML = `<div class="flow dark"><div class="flow-body center">
       <p class="label">${kind === 'arena' ? 'Arena result' : kind === 'wild' ? 'Wild Litterbug' : esc(AREAS[ai].name)}</p>
+      ${kind === 'arena' ? `<p class="muted">${res.ranked ? 'Ranked match' : 'Practice match: rating stays the same.'}</p>` : ''}
       <h1 class="display">${win ? (kind === 'arena' ? 'Victory' : 'Cleaned up') : res.result === 'lose' ? 'Not this time' : 'Walked away'}</h1>
       ${kind === 'wild' && win && spawnDone ? `<p class="muted">You cleaned up the ${esc(G.LITTER[spawnDone.litter].name)} near you. It\u2019s gone from your map.</p>` : ''}
       <div class="flex" style="justify-content:center;gap:4px">${SK.st.team.map(id => SK.art(id, { size: 84, mood: win ? 'happy' : 'ok' })).join('')}</div>

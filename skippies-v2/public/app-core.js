@@ -35,6 +35,25 @@
   SK.clearTimers = () => { SK.timers.forEach(t => clearTimeout(t)); SK.timers = []; };
   SK.later = (fn, ms) => { SK.timers.push(setTimeout(fn, ms)); };
   SK.on = (id, fn) => { const el = doc.getElementById(id); if (el) el.onclick = fn; return el; };
+  SK.lastError = null;
+  SK.fail = function (message, detail) {
+    SK.lastError = { message: String(message || 'Something went wrong.'), detail: detail == null ? '' : String(detail).slice(0, 240), at: Date.now() };
+    try { SK.toast(SK.lastError.message + ' Check Help & recovery in Settings.', 'alert'); } catch (e) { }
+  };
+  if (root.addEventListener) {
+    root.addEventListener('error', e => SK.fail('Something stopped working.', e && e.message));
+    root.addEventListener('unhandledrejection', e => SK.fail('A background task failed.', e && e.reason && e.reason.message));
+  }
+  SK.recoverySheet = function () {
+    const err = SK.lastError, { sh, close } = SK.sheet('Help & recovery', `<div class="stack">
+      <p>Your Skippies and progress stay on this device unless you chose online play. Recovery here never deletes them.</p>
+      ${err ? `<div class="banner warn">${ic('alert', 20)}<span><b>${esc(err.message)}</b><br><span class="caption">${esc(err.detail || 'No extra details.')}</span></span></div>` : '<p class="muted">No recent errors recorded.</p>'}
+      <div class="group mt12"><button class="row" id="reload"><span class="lead">${ic('refresh', 20)}</span><span class="grow title">Reload the app</span>${ic('next', 20)}</button>
+      <button class="row" id="resync"><span class="lead">${ic('shield', 20)}</span><span class="grow"><span class="title">Sync latest progress</span><br><span class="meta">Online mode only</span></span>${ic('next', 20)}</button></div>
+      <p class="caption mt12">If a scan fails, check camera permission and try again. If online play keeps failing, check your connection or switch to offline play in Settings.</p></div>`);
+    sh.querySelector('#reload').onclick = () => { close(); root.location.reload(); };
+    sh.querySelector('#resync').onclick = async () => { close(); const r = await SK.call('GET', '/api/state'); SK.toast(r.status === 200 ? 'Up to date' : SK.errMsg(r, 'Couldn\u2019t sync right now.'), r.status === 200 ? 'check' : 'alert'); };
+  };
   SK.dark = on => {
     doc.body.classList.toggle('dark-bg', !!on);
     const m = doc.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', on ? '#13241B' : '#F7F3EA');
@@ -132,6 +151,10 @@
     if (r.status === 429) r.body.message = 'Too many requests. Wait a moment and try again.';
     return r;
   };
+  SK.captureChallenge = async function () {
+    const r = await SK.call('POST', '/api/capture/challenge');
+    return r.status === 200 ? r.body : null;
+  };
   SK.setState = s => { SK.st = s; if (s.serverNow) SK.offset = s.serverNow - Date.now(); };
   SK.errMsg = (r, fallback) => (r.body && (r.body.message || SK.ERR[r.body.error])) || fallback || 'Something went wrong. Try again.';
   SK.ERR = {
@@ -228,7 +251,8 @@
     <p>Your phone\u2019s camera checks that the item is really there before you can snap it. The check runs on your phone.</p>
     <p>Your photo is <b>never uploaded</b>. We only send a 16-character fingerprint, so the same photo can\u2019t be used twice.</p>
     <p>Limits keep it fair: one photo a minute and up to ${C.MAX_ACTIONS_PER_DAY} eggs a day.</p>
-    <p class="caption">The first scan downloads the scanner (about 5 MB), so it needs internet.</p></div>`);
+    <p class="caption">The scanner is stored with the app after the first load. Each snap uses a short-lived check code, so old camera frames can\u2019t be replayed.</p>
+    <p class="caption">This demo recognises everyday objects only. It doesn\u2019t prove the item is reusable or that recycling happened, so please use it honestly.</p></div>`);
   // Player name: type your own (3-20 letters/numbers, word filter, must be unique online) or tap a random one.
   // The same rules run here (instant feedback) and on the server (the real check).
   SK.pickName = async function (first) {

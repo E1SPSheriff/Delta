@@ -1,7 +1,7 @@
 /* Mamashop Rewards inside Skippies. */
 (function (root) {
   'use strict';
-  const SK = root.SK, doc = root.document, ic = SK.ic, esc = SK.esc;
+  const SK = root.SK, doc = root.document, ic = SK.ic, esc = SK.esc, C = G.C;
   const KEY = 'mamashop_rewards';
   const CATS = [
     ['Lunchboxes', 1, 'On the Go'], ['Reusable Straws', 1, 'On the Go'],
@@ -70,6 +70,8 @@
     });
     return { points, bonus: Object.keys(groups).length >= 3 ? 50 : 0 };
   }
+  const seasonClaims = () => (SK.st && Array.isArray(SK.st.claims) ? SK.st.claims : []).filter(c => c.season === (SK.st && SK.st.season));
+  const claimEligible = () => !!SK.st && G.seasonActionDays(SK.st) >= C.STAR_DAYS && !!SK.st.rewardCode && SK.st.rewardSeason === SK.st.season;
 
   SK.views.rewards = function () {
     const s = load(), ti = tierIndex(s), next = TIERS[ti + 1];
@@ -78,7 +80,7 @@
     const result = calc();
     return `
       <div class="page-title">
-        <div><span class="label">Mamashop Rewards</span><h1 class="mt4">${s.pts} points</h1></div>
+        <div><span class="label">Mamashop Rewards demo</span><h1 class="mt4">${s.pts} points</h1></div>
         <img src="logos/mamashop-rewards-icon.png" width="44" height="44" alt="Mamashop Rewards" style="object-fit:contain">
       </div>
       <section class="section" style="margin-top:8px">
@@ -112,7 +114,15 @@
         <div class="group">${ARTICLES.map((article, i) => {
           const done = s.reads.wk === week() && s.reads.ids.indexOf(i) > -1;
           return `<div class="row"><span class="grow title">${esc(article)}</span><button class="btn btn-ghost btn-sm" data-read="${i}" ${done ? 'disabled' : ''}>${done ? 'Read' : 'Read +5'}</button></div>`;
-        }).join('')}<div class="row"><span class="grow"><span class="title">Refer a friend</span><br><span class="meta">100 points after their first order</span></span><button class="btn btn-secondary btn-sm" id="copy-ref">Copy code</button></div></div>
+        }).join('')}</div>
+      </section>
+      <section class="section">
+        <div class="section-head"><span class="label">SKIPPIES season claim</span></div>
+        <p class="muted">Claims come from ${C.STAR_DAYS} real BYO/recycling days in one season. They are issued here, not typed in by players.</p>
+        ${claimEligible() && !seasonClaims().some(c => c.status === 'active') ? `<button class="btn btn-primary btn-block mt12" id="claim-create">${ic('trophy', 20)}Get my MamaShop claim</button>` : ''}
+        ${seasonClaims().length ? `<div class="group mt12">${seasonClaims().map(c => `<div class="row"><span class="lead">${ic(c.status === 'redeemed' ? 'check' : 'trophy', 20)}</span><span class="grow"><span class="title">${esc(c.reward)}</span><br><span class="meta">${esc(c.id)} · ${c.status === 'redeemed' ? 'Used' : 'Active'}</span></span>${c.status === 'active' ? `<button class="btn btn-ghost btn-sm" data-use-claim="${esc(c.id)}">Mark used (demo)</button>` : ''}</div>`).join('')}</div>`
+        : `<div class="banner info mt12">${claimEligible() ? 'Your claim is ready to issue.' : 'Keep logging real BYO or recycling days to unlock a claim.'}</div>`}
+        <p class="caption mt8">This is a campaign demo counter. No purchase is required and no real voucher value is promised.</p>
       </section>
       <section class="section">
         <div class="section-head"><span class="label">Redeem</span></div>
@@ -127,7 +137,24 @@
       </section>`;
   };
 
+  let claimChecked = '';
   SK.binders.rewards = function () {
+    const checkKey = (SK.st && SK.st.id) + ':' + (SK.st && SK.st.season) + ':' + seasonClaims().map(c => c.id + c.status).join(',');
+    if (checkKey !== claimChecked) { claimChecked = checkKey; SK.call('GET', '/api/rewards/claim').then(r => { if (r.status === 200 && r.body.state) SK.render(); }); }
+    SK.on('claim-create', async () => {
+      const r = await SK.call('POST', '/api/rewards/claim');
+      SK.toast(r.status === 200 ? 'Claim issued: ' + r.body.claim.id : SK.errMsg(r, 'Not eligible yet.'), r.status === 200 ? 'check' : 'alert');
+      if (SK.audio) SK.audio.play(r.status === 200 ? 'reward' : 'error');
+      if (r.status === 200) SK.render();
+    });
+    doc.querySelectorAll('[data-use-claim]').forEach(button => {
+      button.onclick = async () => {
+        const r = await SK.call('POST', '/api/rewards/redeem', { id: button.dataset.useClaim });
+        SK.toast(r.status === 200 ? 'Marked as used (demo)' : SK.errMsg(r), r.status === 200 ? 'check' : 'alert');
+        if (SK.audio) SK.audio.play(r.status === 200 ? 'tap' : 'error');
+        if (r.status === 200) SK.render();
+      };
+    });
     const category = doc.getElementById('reward-category');
     if (category) category.onchange = () => { selectedCat = Number(category.value); };
     SK.on('reward-add', () => {
@@ -161,20 +188,11 @@
         SK.render();
       };
     });
-    SK.on('copy-ref', () => {
-      const code = 'MAMA-EISTEN';
-      if (root.navigator.clipboard && root.isSecureContext) {
-        root.navigator.clipboard.writeText(code).then(() => SK.toast('Code ' + code + ' copied', 'check'), () => SK.toast(code));
-      } else { SK.toast(code); }
-    });
     doc.querySelectorAll('[data-reward]').forEach(button => {
       button.onclick = () => {
-        const s = load(), i = Number(button.dataset.reward), reward = REWARDS[i];
-        if (s.pts < reward[1] || tierIndex(s) < reward[3]) return;
-        const code = 'MAMA' + Math.random().toString(36).slice(2, 7).toUpperCase();
-        add(s, -reward[1], 'Redeemed ' + reward[0]);
-        SK.toast(reward[0] + ' code: ' + code, 'check');
-        SK.render();
+        const i = Number(button.dataset.reward), reward = REWARDS[i];
+        SK.sheet('How to use this reward', `<div class="stack"><p><b>${esc(reward[0])}</b> is a demo rewards catalogue item.</p>
+          <p>Real SKIPPIES season claims are issued from verified BYO and recycling days above. No locally generated code counts at MamaShop.</p></div>`);
       };
     });
   };

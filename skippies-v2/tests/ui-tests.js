@@ -64,7 +64,7 @@ let serverApi = null;
 const sha = async s => nodeCrypto.createHash('sha256').update(s).digest('hex');
 const rhex = n => nodeCrypto.randomBytes(n).toString('hex');
 function loadScript(f) { vm.runInThisContext(fs.readFileSync(path.join(PUB, f), 'utf8'), { filename: f }); }
-loadScript('engine.js'); loadScript('api.js');
+loadScript('version.js'); loadScript('engine.js'); loadScript('api.js');
 const dataFile = JSON.parse(fs.readFileSync(path.join(PUB, 'data', 'recycling-points.json'), 'utf8'));
 global.fetch = async (url, opts) => {
   opts = opts || {};
@@ -110,7 +110,7 @@ async function playBattle(maxTurns) {
 }
 
 (async () => {
-  for (const f of ['config.js', 'art.js', 'icons.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js']) {
+  for (const f of ['config.js', 'art.js', 'icons.js', 'audio.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js']) {
     if (f === 'config.js' && MODE === 'online') continue; // server serves its own config.js
     loadScript(f);
   }
@@ -268,11 +268,15 @@ async function playBattle(maxTurns) {
   ok(!!sel('[data-mv="type"]'), 'arena battle started');
   ok(txt().includes('Drink beats Water'), 'pvp type tip shown');
   ok(await playBattle(), 'arena battle reaches result');
-  ok(txt().includes('Rating'), 'arena result shows rating change');
-  ok(SK.st.arena.rating !== rate0, 'rating changed');
+  ok(txt().includes('Rating'), 'arena result shows rating');
   if (MODE === 'online') {
+    ok(txt().includes('Ranked match'), 'real player battle is ranked');
+    ok(SK.st.arena.rating !== rate0, 'rating changed for ranked battle');
     const s2 = await serverApi.handle({ method: 'GET', path: '/api/state', headers: P2.H2 });
-    ok(s2.body.state.arena.rating - 1000 === -Math.round((SK.st.arena.rating - rate0) / 2), 'offline defender rating moves by half the opposite amount');
+    ok(s2.body.state.arena.rating - 1000 === -Math.round((SK.st.arena.rating - rate0) / 2), 'defender rating moves by half the opposite amount');
+  } else {
+    ok(txt().includes('Practice match: rating stays the same.'), 'practice bot battle is clearly non-ranked');
+    ok(SK.st.arena.rating === rate0, 'practice bot does not change rating');
   }
   await click($('cont'), 'continue');
 
@@ -310,8 +314,14 @@ async function playBattle(maxTurns) {
   await click(sel('[data-tab="home"]'), 'home');
   ok(txt().includes('Habit mileage') && /\+\d+%/.test(txt()), 'habit mileage bars shown');
   while (G.seasonActionDays(SK.st) < 5) { T += G.DAY; r = await snap('kit', ['spoon']); await doneReveal(); }
-  ok(!!SK.st.rewardCode && /^SKIP-[A-Z2-9]{5}$/.test(SK.st.rewardCode), 'season reward code after 5 BYO days');
-  await click(sel('[data-tab="home"]'), 'home'); ok(txt().includes(SK.st.rewardCode), 'reward code shown on home');
+  ok(!!SK.st.rewardCode && /^SKIP-[A-Z2-9]{5}$/.test(SK.st.rewardCode), 'season reward unlocked after 5 BYO days');
+  await click(sel('[data-tab="home"]'), 'home'); ok(txt().includes('Open Rewards to issue your claim') && !txt().includes(SK.st.rewardCode), 'home hides raw reward code and points to claims');
+  await click($('goclaims'), 'open claims'); await flush(); await flush();
+  ok(txt().includes('SKIPPIES season claim') && !!$('claim-create'), 'rewards shows server-backed claim action');
+  await click($('claim-create'), 'create claim'); await flush(); await flush();
+  const claim = (SK.st.claims || []).find(c => c.season === SK.st.season && c.status === 'active');
+  ok(!!claim && txt().includes(claim.id), 'claim issued and shown by id, not raw code');
+  await click(sel('[data-tab="home"]'), 'home');
 
   // ---------- ranks ----------
   await click(sel('[data-tab="ranks"]'), 'ranks'); await flush(); await flush();
@@ -416,6 +426,12 @@ async function playBattle(maxTurns) {
   else ok(!$('pushtog'), 'no push toggle offline');
   noEmoji('settings');
   await click($('privacy'), 'privacy'); ok(txt().includes(MODE === 'local' ? 'only on this device' : 'never collect'), 'privacy notice'); await closeSheet();
+  await click($('settings'), 'settings');
+  ok(txt().includes('Reusable nickname') && !!$('reusablenick') && !!$('help') && !!$('soundtog'), 'settings exposes reusable identity, recovery and sound');
+  await click($('reusablenick'), 'reusable nickname'); $('rnick').value = 'Kopi Cup'; await click($('rnsave'), 'save reusable nickname'); await flush();
+  ok(SK.st.reusable.nickname === 'Kopi Cup', 'reusable nickname saved through settings');
+  await click($('settings'), 'settings'); const stog = $('soundtog'); stog.checked = false; stog.onchange(); ok(SK.audio.muted(), 'sound toggle mutes'); stog.checked = true; stog.onchange();
+  await click($('help'), 'help and recovery'); ok(txt().includes('Help & recovery') && !!$('reload') && !!$('resync'), 'recovery sheet offers reload and resync'); await closeSheet();
 
   // reminder nudge
   T = (Math.floor((T + 8 * G.HOUR) / G.DAY) + 1) * G.DAY - 8 * G.HOUR + 8 * G.HOUR; // next SG day 08:00

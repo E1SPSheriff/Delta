@@ -1,7 +1,7 @@
 /* SKIPPIES v2 game engine: pure, deterministic logic shared by the browser and the server. No DOM, no network. */
 (function (root) {
   'use strict';
-  const VERSION = '2.3.0', SAVE_V = 4, DAY = 86400000, HOUR = 3600000, MIN = 60000;
+  const VERSION = root.SKIPPIES_RELEASE || '2.4.0', SAVE_V = 5, DAY = 86400000, HOUR = 3600000, MIN = 60000;
   const TZ = 8 * HOUR; // Singapore time (UTC+8, no DST) for day boundaries everywhere
   const C = {
     SEASON_DAYS: 14, STAR_DAYS: 5, MAX_ACTIONS_PER_DAY: 6, ACTION_COOLDOWN_MS: 60000,
@@ -9,7 +9,8 @@
     TEAM_MAX: 3, UTIL_USES: 2, MAX_LEVEL: 30, MAX_STARS: 5,
     PITY_RARE: 10, BYO_SCRAP: 10, RECYCLE_SCRAP: 30, DAILY_SCRAP: 10, SCRAP_XP: 2, TRAIN_STEP: 10,
     MILEAGE_CAP: 25, ELO_K: 32, ARENA_START: 1000, HASH_DISTANCE: 6, HASH_WINDOW_DAYS: 30, OWN_HASH_DAYS: 90, NAME_COOLDOWN_DAYS: 7,
-    WILD_PER_DAY: 10, WILD_SLOT_MS: 15 * 60000, WILD_CHANCE: 22, WILD_RANGE_M: 150, WILD_SCAN_M: 400, WILD_SCRAP: 8
+    WILD_PER_DAY: 10, WILD_SLOT_MS: 15 * 60000, WILD_CHANCE: 22, WILD_RANGE_M: 150, WILD_SCAN_M: 400, WILD_SCRAP: 8,
+    RANKED_DAILY: 5, ARENA_REPEAT_MS: 20 * 60000, RANKED_PLACEMENT: 5, CLAIM_TTL: 14 * DAY
   };
 
   // ---------- types & items ----------
@@ -111,6 +112,18 @@
   const weekStart = adn => adn - ((adn + 3) % 7);                 // Monday of that week
   function ymdOf(ms) { const d = new Date(ms + TZ); const z = n => String(n).padStart(2, '0'); return d.getUTCFullYear() + '-' + z(d.getUTCMonth() + 1) + '-' + z(d.getUTCDate()); }
   const clone = o => JSON.parse(JSON.stringify(o));
+  const own = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+  const safeKey = k => typeof k === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(k) && k !== '__proto__' && k !== 'prototype' && k !== 'constructor' && k !== 'toString' && k !== 'valueOf';
+  function safeMap(o, keys) {
+    const m = Object.create(null);
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return m;
+    for (const k of Object.keys(o)) if (safeKey(k) && (!keys || keys.includes(k))) m[k] = o[k];
+    return m;
+  }
+  const validSpeciesId = id => typeof id === 'string' && own(SP, id);
+  const validItemId = id => typeof id === 'string' && own(ITEMS, id);
+  const ownedSpeciesId = (p, id) => validSpeciesId(id) && !!p && own(p.dex, id) && !!p.dex[id] && typeof p.dex[id] === 'object';
+  const seqNum = (v, dflt, min, max) => { const n = Number(v); if (!Number.isFinite(n)) return dflt; return Math.max(min, Math.min(max, Math.floor(n))); };
 
   // ---------- perceptual hash (dHash, 64-bit) ----------
   // gray: array of 72 luminance values (9 wide x 8 tall, row-major). Returns 16-char hex.
@@ -282,17 +295,102 @@
   }
   const checkName = raw => { const p = nameProblem(raw); return p ? { ok: false, reason: p, message: NAME_ERR[p] } : { ok: true, name: cleanName(raw) }; };
   function makeCode(rng) { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 6; i++) s += A[Math.floor(rng() * A.length)]; return s; }
+  const safeNickname = raw => { const c = checkName(raw); return c.ok ? c.name : 'My reusable'; };
+  function sanitizePlayer(raw, now) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const t = seqNum(now, Date.now(), 0, 8640000000000000), adn = adnOf(t);
+    if (typeof raw.id !== 'string' || !safeKey(raw.id) || raw.id.length > 80) return null;
+    const rng = mulberry32(hash32(raw.id));
+    const p = {};
+    p.v = SAVE_V; p.id = raw.id; p.bot = raw.bot === true;
+    p.name = p.bot && typeof raw.name === 'string' && raw.name.length <= 60 ? cleanName(raw.name) : (checkName(raw.name).ok ? cleanName(raw.name) : makeName(rng));
+    p.friendCode = typeof raw.friendCode === 'string' && /^[A-Z2-9]{6}$/.test(raw.friendCode) ? raw.friendCode : makeCode(rng);
+    p.created = seqNum(raw.created, t, 0, t);
+    p.zone = validZone(raw.zone) ? raw.zone : null;
+    p.season = seqNum(raw.season, 1, 1, 999); p.startAdn = seqNum(raw.startAdn, adn, 0, 8640000000);
+    p.actions = [];
+    if (Array.isArray(raw.actions)) for (const a of raw.actions.slice(-5000)) {
+      if (!a || typeof a !== 'object' || !validItemId(a.item)) continue;
+      const aAdn = seqNum(a.adn, -1, 0, 8640000000), ts = seqNum(a.ts, -1, 0, 8640000000000000);
+      if (aAdn < 0 || ts < 0) continue;
+      p.actions.push({ adn: aAdn, ts, season: seqNum(a.season, p.season, 1, 999), kind: ITEMS[a.item].kind, item: a.item, verified: a.verified === true, together: a.together === true, family: a.family === true });
+    }
+    p.dex = Object.create(null);
+    if (raw.dex && typeof raw.dex === 'object' && !Array.isArray(raw.dex)) for (const id of Object.keys(raw.dex)) {
+      if (!validSpeciesId(id)) continue;
+      const d = raw.dex[id]; if (!d || typeof d !== 'object') continue;
+      const stars = seqNum(d.stars, 1, 1, C.MAX_STARS), sp = SP[id];
+      p.dex[id] = { stars, copies: seqNum(d.copies, 0, 0, 99999), level: seqNum(d.level, 1, 1, C.MAX_LEVEL), xp: seqNum(d.xp, 0, 0, 100000), stage: evoStage(sp, stars), first: seqNum(d.first, adn, 0, 8640000000) };
+    }
+    const dexIds = Object.keys(p.dex);
+    const team = Array.isArray(raw.team) ? raw.team.filter((id, i, a) => ownedSpeciesId({ dex: p.dex }, id) && a.indexOf(id) === i).slice(0, C.TEAM_MAX) : [];
+    p.team = team.length ? team : dexIds.sort((a, c) => p.dex[c].level - p.dex[a].level).slice(0, C.TEAM_MAX);
+    p.buddy = ownedSpeciesId({ dex: p.dex }, raw.buddy) ? raw.buddy : (p.team[0] || null);
+    p.energy = seqNum(raw.energy, C.DAILY_ENERGY, 0, C.ENERGY_MAX);
+    p.dailyAdn = seqNum(raw.dailyAdn, adn, 0, 8640000000);
+    p.scrap = seqNum(raw.scrap, 0, 0, 9999999);
+    p.mileage = Object.create(null);
+    const mileageKeys = Object.keys(TYPES).concat('recycle');
+    for (const k of Object.keys(safeMap(raw.mileage, mileageKeys))) p.mileage[k] = seqNum(raw.mileage[k], 0, 0, 99999);
+    p.pity = seqNum(raw.pity, 0, 0, C.PITY_RARE - 1); p.rolls = seqNum(raw.rolls, 0, 0, 9999999);
+    p.areas = AREAS.map((_, i) => ({ progress: seqNum(raw.areas && raw.areas[i] && raw.areas[i].progress, 0, 0, 4) }));
+    p.wild = { adn: seqNum(raw.wild && raw.wild.adn, adn, 0, 8640000000), n: seqNum(raw.wild && raw.wild.n, 0, 0, C.WILD_PER_DAY) };
+    p.litterCleaned = seqNum(raw.litterCleaned, 0, 0, 9999999); p.battlesWon = seqNum(raw.battlesWon, 0, 0, 9999999);
+    p.tutorialDone = raw.tutorialDone === true; p.finished = raw.finished === true;
+    p.arena = {
+      rating: seqNum(raw.arena && raw.arena.rating, C.ARENA_START, 100, 5000),
+      wins: seqNum(raw.arena && raw.arena.wins, 0, 0, 999999), losses: seqNum(raw.arena && raw.arena.losses, 0, 0, 999999),
+      rankedWins: seqNum(raw.arena && raw.arena.rankedWins, 0, 0, 999999), rankedLosses: seqNum(raw.arena && raw.arena.rankedLosses, 0, 0, 999999),
+      rankedDay: seqNum(raw.arena && raw.arena.rankedDay, 0, 0, 8640000000), rankedPlayed: seqNum(raw.arena && raw.arena.rankedPlayed, 0, 0, C.RANKED_DAILY),
+      lastOppId: raw.arena && typeof raw.arena === 'object' && safeKey(raw.arena.lastOppId) ? raw.arena.lastOppId : null,
+      lastOppTs: seqNum(raw.arena && raw.arena.lastOppTs, 0, 0, 8640000000000000)
+    };
+    p.arenaHistory = [];
+    if (Array.isArray(raw.arenaHistory)) for (const h of raw.arenaHistory.slice(-120)) {
+      if (!h || typeof h.oppId !== 'string' || !safeKey(h.oppId)) continue;
+      p.arenaHistory.push({ oppId: h.oppId, adn: seqNum(h.adn, 0, 0, 8640000000), ts: seqNum(h.ts, 0, 0, 8640000000000000), ranked: h.ranked === true });
+    }
+    p.rewardCode = typeof raw.rewardCode === 'string' && /^SKIP-[A-Z2-9]{5}$/.test(raw.rewardCode) ? raw.rewardCode : null;
+    p.rewardSeason = p.rewardCode ? seqNum(raw.rewardSeason, p.season, 1, 999) : null;
+    p.claims = [];
+    if (Array.isArray(raw.claims)) for (const c of raw.claims.slice(-40)) {
+      if (!c || typeof c !== 'object' || typeof c.id !== 'string' || typeof c.codeHash !== 'string') continue;
+      p.claims.push({ id: c.id.slice(0, 80), codeHash: c.codeHash.slice(0, 64), reward: typeof c.reward === 'string' ? c.reward.slice(0, 60) : 'MamaShop reward', created: seqNum(c.created, 0, 0, 8640000000000000), status: c.status === 'redeemed' ? 'redeemed' : 'active', redeemedAt: c.status === 'redeemed' ? seqNum(c.redeemedAt, 0, 0, 8640000000000000) : null, season: seqNum(c.season, p.season, 1, 999) });
+    }
+    p.rinsed = Object.create(null);
+    for (const k of Object.keys(safeMap(raw.rinsed))) if (/^\d+$/.test(k) && raw.rinsed[k] === true) p.rinsed[k] = true;
+    p.lastActionTs = seqNum(raw.lastActionTs, 0, 0, 8640000000000000);
+    p.lastCatch = validSpeciesId(raw.lastCatch && raw.lastCatch.id) ? { id: raw.lastCatch.id, ts: seqNum(raw.lastCatch.ts, 0, 0, 8640000000000000) } : null;
+    p.reusable = { nickname: safeNickname(raw.reusable && raw.reusable.nickname) };
+    p.capture = null;
+    if (raw.capture && typeof raw.capture.nonce === 'string' && /^[0-9a-f]{24,64}$/.test(raw.capture.nonce)) p.capture = { nonce: raw.capture.nonce, expires: seqNum(raw.capture.expires, 0, 0, 8640000000000000) };
+    p.nameSetAt = raw.nameSetAt == null ? null : seqNum(raw.nameSetAt, 0, 0, 8640000000000000);
+    p.reminders = {
+      byo: G_hhmm(raw.reminders && raw.reminders.byo) ? raw.reminders.byo : '07:15',
+      recycleDow: seqNum(raw.reminders && raw.reminders.recycleDow, 6, 0, 6),
+      recycleTime: G_hhmm(raw.reminders && raw.reminders.recycleTime) ? raw.reminders.recycleTime : '10:00'
+    };
+    p.pushSent = Object.create(null);
+    for (const k of Object.keys(safeMap(raw.pushSent))) p.pushSent[k] = seqNum(raw.pushSent[k], 0, 0, 8640000000);
+    if (raw.push && typeof raw.push.endpoint === 'string' && /^https:\/\//.test(raw.push.endpoint) && raw.push.keys && typeof raw.push.keys.p256dh === 'string' && typeof raw.push.keys.auth === 'string') {
+      p.push = { endpoint: raw.push.endpoint.slice(0, 1000), keys: { p256dh: raw.push.keys.p256dh.slice(0, 200), auth: raw.push.keys.auth.slice(0, 100) } };
+    }
+    return p;
+  }
+  function G_hhmm(s) { return typeof s === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(s); }
 
   // ---------- player state ----------
   function newPlayer(id, now, rng) {
-    return {
+    const raw = {
       v: SAVE_V, id, name: makeName(rng), friendCode: makeCode(rng), created: now, bot: false, zone: null,
-      season: 1, startAdn: adnOf(now), actions: [], dex: {}, team: [], buddy: null,
-      energy: C.DAILY_ENERGY, dailyAdn: adnOf(now), scrap: C.DAILY_SCRAP, mileage: {}, pity: 0, rolls: 0,
+      season: 1, startAdn: adnOf(now), actions: [], dex: Object.create(null), team: [], buddy: null,
+      energy: C.DAILY_ENERGY, dailyAdn: adnOf(now), scrap: C.DAILY_SCRAP, mileage: Object.create(null), pity: 0, rolls: 0,
       areas: AREAS.map(() => ({ progress: 0 })), wild: { adn: adnOf(now), n: 0 }, litterCleaned: 0, battlesWon: 0, tutorialDone: false, finished: false,
-      arena: { rating: C.ARENA_START, wins: 0, losses: 0 }, rewardCode: null, rewardSeason: null, rinsed: {}, lastActionTs: 0,
+      arena: { rating: C.ARENA_START, wins: 0, losses: 0, rankedWins: 0, rankedLosses: 0, rankedDay: 0, rankedPlayed: 0, lastOppId: null, lastOppTs: 0 }, arenaHistory: [], rewardCode: null, rewardSeason: null, claims: [],
+      rinsed: Object.create(null), lastActionTs: 0, lastCatch: null, reusable: { nickname: 'My reusable' }, capture: null, nameSetAt: null, pushSent: Object.create(null),
       reminders: { byo: '07:15', recycleDow: 6, recycleTime: '10:00' }
     };
+    return sanitizePlayer(raw, now);
   }
   function seasonDay(p, now) { return adnOf(now) - p.startAdn + 1; }
   function claimDaily(p, now) {
@@ -305,17 +403,51 @@
   const actionDaysAll = p => new Set(verifiedActions(p).map(a => a.adn)).size;
   const seasonActionDays = p => new Set(verifiedActions(p).filter(a => a.season === p.season && a.adn - p.startAdn < C.SEASON_DAYS).map(a => a.adn)).size;
   function ecoScore(p, sinceAdn) { return verifiedActions(p).filter(a => sinceAdn == null || a.adn >= sinceAdn).length; }
+  function habitDays(p, kind, now) {
+    const start = weekStart(adnOf(now)), set = new Set(verifiedActions(p).filter(a => !kind || a.kind === kind).map(a => a.adn));
+    return Array.from({ length: 7 }, (_, i) => ({ adn: start + i, done: set.has(start + i) }));
+  }
+  function habitStreak(p, kind, now) {
+    const days = new Set(verifiedActions(p).filter(a => !kind || a.kind === kind).map(a => a.adn));
+    const today = adnOf(now); let cursor = days.has(today) ? today : today - 1, n = 0;
+    while (days.has(cursor)) { n++; cursor--; }
+    return n;
+  }
+  function longestStreak(p, kind) {
+    const days = Array.from(new Set(verifiedActions(p).filter(a => !kind || a.kind === kind).map(a => a.adn))).sort((a, c) => a - c);
+    let best = 0, run = 0, last = null;
+    for (const d of days) { run = last != null && d === last + 1 ? run + 1 : 1; best = Math.max(best, run); last = d; }
+    return best;
+  }
+  function habitStats(p, now) {
+    const days = habitDays(p, 'byo', now), successful = days.filter(d => d.done).length;
+    return { days, successful, weekly: Math.round(successful / 7 * 100), current: habitStreak(p, 'byo', now), longest: longestStreak(p, 'byo'), message: successful >= 5 ? 'Consistency is building.' : successful >= 3 ? 'Every BYO day counts.' : 'Start where you are. Consistency over perfection.' };
+  }
+  function reusableStats(p, now) {
+    const uses = verifiedActions(p).filter(a => a.kind === 'byo').length;
+    return { nickname: p.reusable && p.reusable.nickname ? p.reusable.nickname : 'My reusable', uses, current: habitStreak(p, 'byo', now), longest: longestStreak(p, 'byo'), potentiallyAvoided: uses };
+  }
+  function seasonRecap(p, now) {
+    const end = p.startAdn + C.SEASON_DAYS, acts = verifiedActions(p).filter(a => a.season === p.season && a.adn >= p.startAdn && a.adn < end);
+    const byo = acts.filter(a => a.kind === 'byo'), byoDays = new Set(byo.map(a => a.adn)).size;
+    const types = Object.create(null); for (const a of byo) { const ty = ITEMS[a.item].type; types[ty] = (types[ty] || 0) + 1; }
+    const favourite = Object.keys(types).sort((a, c) => types[c] - types[a])[0] || null;
+    const dexIds = Object.keys(p.dex), strongest = dexIds.slice().sort((a, c) => power(p, c) - power(p, a))[0] || null;
+    return { season: p.season, activeDays: new Set(acts.map(a => a.adn)).size, byoDays, streak: longestStreak(p, 'byo'), discovered: dexIds.length, hatched: p.rolls, strongest, favourite, potentiallyAvoided: byo.length, reward: !!p.rewardCode || p.claims.some(c => c.season === p.season) };
+  }
 
   // ---------- collection ----------
   function addCopy(p, id, adn) {
-    const isNew = !p.dex[id];
+    if (!validSpeciesId(id)) return false;
+    if (!p.dex || Object.getPrototypeOf(p.dex) !== null) p.dex = safeMap(p.dex);
+    const isNew = !own(p.dex, id);
     if (isNew) { p.dex[id] = { stars: 1, copies: 0, level: 1, xp: 0, stage: 0, first: adn }; if (p.team.length < C.TEAM_MAX) p.team.push(id); if (!p.buddy) p.buddy = id; }
     else p.dex[id].copies++;
     return isNew;
   }
-  function mergeCost(p, id) { const d = p.dex[id]; if (!d || d.stars >= C.MAX_STARS) return null; return STAR_COST[d.stars]; }
+  function mergeCost(p, id) { const d = ownedSpeciesId(p, id) ? p.dex[id] : null; if (!d || d.stars >= C.MAX_STARS) return null; return STAR_COST[d.stars]; }
   function merge(p, id) {
-    const d = p.dex[id]; if (!d) return { ok: false, reason: 'missing' };
+    const d = ownedSpeciesId(p, id) ? p.dex[id] : null; if (!d) return { ok: false, reason: 'missing' };
     if (d.stars >= C.MAX_STARS) return { ok: false, reason: 'max' };
     const cost = STAR_COST[d.stars]; if (d.copies < cost) return { ok: false, reason: 'copies', need: cost, have: d.copies };
     d.copies -= cost; d.stars++;
@@ -324,14 +456,14 @@
   }
   const xpNeed = L => 15 + L * 10;
   function addXP(p, id, amt) {
-    const d = p.dex[id]; if (!d || amt <= 0) return [];
+    const d = ownedSpeciesId(p, id) ? p.dex[id] : null; if (!d || !(amt > 0)) return [];
     const from = d.level; d.xp += amt;
     while (d.level < C.MAX_LEVEL && d.xp >= xpNeed(d.level)) { d.xp -= xpNeed(d.level); d.level++; }
     if (d.level >= C.MAX_LEVEL) d.xp = 0;
     return d.level > from ? [{ id, from, to: d.level }] : [];
   }
   function train(p, id, scrap) {
-    const d = p.dex[id]; scrap = Math.floor(scrap || C.TRAIN_STEP);
+    const d = ownedSpeciesId(p, id) ? p.dex[id] : null; scrap = Math.floor(scrap || C.TRAIN_STEP);
     if (!d) return { ok: false, reason: 'missing' };
     if (!(scrap > 0) || scrap > 1000) return { ok: false, reason: 'amount' };
     if (d.level >= C.MAX_LEVEL) return { ok: false, reason: 'max' };
@@ -340,16 +472,16 @@
   }
   function mileageBonus(p, type) {
     if (type === 'spark') return Math.min(C.MILEAGE_CAP, Math.floor(verifiedActions(p).length / 2)) / 100;
-    return Math.min(C.MILEAGE_CAP, p.mileage[type] || 0) / 100;
+    return Math.min(C.MILEAGE_CAP, own(p.mileage, type) ? p.mileage[type] : 0) / 100;
   }
   const STAGE_MULT = [1, 1.15, 1.3];
   function calcStats(base, L, stage, stars, bonus, boss) {
     const m = (1 + 0.08 * (L - 1)) * STAGE_MULT[stage || 0] * (1 + 0.08 * ((stars || 1) - 1)) * (1 + (bonus || 0)) * (boss ? 1.2 : 1);
     return { maxHp: Math.floor(base.hp * m * (boss ? 2 : 1)) + 10, atk: Math.round(base.atk * m), def: Math.round(base.def * m), spd: Math.round(base.spd * m) };
   }
-  function statsOf(p, id) { const d = p.dex[id], sp = SP[id]; return calcStats(sp.base, d.level, d.stage, d.stars, mileageBonus(p, sp.type)); }
-  function power(p, id) { const s = statsOf(p, id); return Math.round(s.maxHp / 2 + s.atk + s.def + s.spd); }
-  const nameOf = (p, id) => SP[id].stages[p.dex[id] ? p.dex[id].stage : 0];
+  function statsOf(p, id) { const d = ownedSpeciesId(p, id) ? p.dex[id] : null; if (!d) return null; const sp = SP[id]; return calcStats(sp.base, d.level, d.stage, d.stars, mileageBonus(p, sp.type)); }
+  function power(p, id) { const s = statsOf(p, id); return s ? Math.round(s.maxHp / 2 + s.atk + s.def + s.spd) : 0; }
+  const nameOf = (p, id) => validSpeciesId(id) ? SP[id].stages[ownedSpeciesId(p, id) ? p.dex[id].stage : 0] : 'Unknown';
 
   // ---------- hatching ----------
   function rollRarity(p, rng) {
@@ -378,8 +510,8 @@
     return use[Math.floor(rng() * use.length)].id;
   }
   function validateAction(p, now, a) {
-    const it = ITEMS[a && a.item];
-    if (!it) return 'item';
+    if (!a || !validItemId(a.item)) return 'item';
+    const it = ITEMS[a.item];
     if (seasonDay(p, now) > C.SEASON_DAYS) return 'season';
     if (actionsToday(p, now).filter(x => x.verified).length >= C.MAX_ACTIONS_PER_DAY) return 'limit';
     if (now - p.lastActionTs < C.ACTION_COOLDOWN_MS) return 'cooldown';
@@ -394,7 +526,8 @@
     const it = ITEMS[a.item], adn = adnOf(now);
     p.actions.push({ adn, ts: now, season: p.season, kind: it.kind, item: a.item, verified: true, together: !!a.together, family: !!a.family });
     p.lastActionTs = now;
-    if (it.kind === 'byo') p.mileage[it.type] = (p.mileage[it.type] || 0) + 1; else p.mileage.recycle = (p.mileage.recycle || 0) + 1;
+    if (!p.mileage || Object.getPrototypeOf(p.mileage) !== null) p.mileage = safeMap(p.mileage);
+    if (it.kind === 'byo') p.mileage[it.type] = (own(p.mileage, it.type) ? p.mileage[it.type] : 0) + 1; else p.mileage.recycle = (own(p.mileage, 'recycle') ? p.mileage.recycle : 0) + 1;
     const rarity = rollRarity(p, rng), species = rollSpecies(rarity, it.type, rng);
     const hatched = [{ id: species, rarity, isNew: addCopy(p, species, adn), source: 'egg' }];
     p.lastCatch = { id: species, ts: now };
@@ -411,20 +544,21 @@
     return { ok: true, hatched, energy: p.energy - e0, scrap, reward, kind: it.kind };
   }
   function logSelfReport(p, now, item) { // no photo: counts for personal impact only. No egg, no leaderboard.
-    if (!ITEMS[item]) return { ok: false, reason: 'item' };
+    if (!validItemId(item)) return { ok: false, reason: 'item' };
     if (actionsToday(p, now).length >= 12) return { ok: false, reason: 'limit' };
     p.actions.push({ adn: adnOf(now), ts: now, season: p.season, kind: ITEMS[item].kind, item, verified: false }); return { ok: true };
   }
   function rinse(p, now) {
     const t = adnOf(now);
     if (!actionsToday(p, now).some(a => a.verified && a.kind === 'byo')) return { ok: false, reason: 'nobyo' };
-    if (p.rinsed[t]) return { ok: false, reason: 'done' };
+    if (!p.rinsed || Object.getPrototypeOf(p.rinsed) !== null) p.rinsed = safeMap(p.rinsed);
+    if (own(p.rinsed, String(t))) return { ok: false, reason: 'done' };
     p.rinsed[t] = true; const isNew = addCopy(p, 'bubbles', t); p.energy = Math.min(C.ENERGY_MAX, p.energy + C.RINSE_ENERGY);
     return { ok: true, isNew };
   }
-  function newSeason(p, now) { if (seasonDay(p, now) <= C.SEASON_DAYS) return false; p.season++; p.startAdn = adnOf(now); p.rewardCode = null; p.rewardSeason = null; return true; }
+  function newSeason(p, now) { if (seasonDay(p, now) <= C.SEASON_DAYS) return false; p.season++; p.startAdn = adnOf(now); p.rewardCode = null; p.rewardSeason = null; p.claims = []; return true; }
   function setTeam(p, ids) {
-    if (!Array.isArray(ids) || ids.length < 1 || ids.length > C.TEAM_MAX || new Set(ids).size !== ids.length || !ids.every(id => p.dex[id])) return false;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > C.TEAM_MAX || new Set(ids).size !== ids.length || !ids.every(id => ownedSpeciesId(p, id))) return false;
     p.team = ids.slice(); return true;
   }
 
@@ -450,7 +584,8 @@
     return 1;
   }
   function unitFromDex(p, id, side) {
-    const d = p.dex[id], sp = SP[id], s = statsOf(p, id);
+    const d = ownedSpeciesId(p, id) ? p.dex[id] : null, s = statsOf(p, id); if (!d || !s) return null;
+    const sp = SP[id];
     return { side, id, name: nameOf(p, id), level: d.level, stage: d.stage, stars: d.stars, type: sp.type, util: sp.util, hp: s.maxHp, maxHp: s.maxHp, atk: s.atk, def: s.def, spd: s.spd, cheer: 0, guard: false, utilLeft: C.UTIL_USES, used: false, turns: 0 };
   }
   function litterUnit(id, level) {
@@ -464,14 +599,38 @@
     if (!p.team.length) return { error: 'team' };
     const tutorial = !p.tutorialDone && ai === 0 && fi === 0;
     if (!tutorial) { if (p.energy < 1) return { error: 'energy' }; p.energy--; }
-    const bt = { mode: 'pve', ai, fi, boss: fi === 3, tutorial, seed: seed >>> 0, allies: p.team.map(id => unitFromDex(p, id, 'ally')), enemies: list[fi].map(([id, lv]) => litterUnit(id, lv)), a: 0, e: 0, turn: 0, over: false, result: null, cleaned: 0 };
+    const allies = p.team.map(id => unitFromDex(p, id, 'ally')).filter(Boolean);
+    if (!allies.length) return { error: 'team' };
+    const bt = { mode: 'pve', ai, fi, boss: fi === 3, tutorial, seed: seed >>> 0, allies, enemies: list[fi].map(([id, lv]) => litterUnit(id, lv)), a: 0, e: 0, turn: 0, over: false, result: null, cleaned: 0 };
     bt.allies[0].used = true; return bt;
   }
-  function startArena(p, opp, seed) {
-    if (!p.team.length || !opp || !opp.team || !opp.team.length) return { error: 'team' };
-    if (p.energy < 1) return { error: 'energy' }; p.energy--;
-    const ghost = opp.team.map(id => Object.assign(unitFromDex(opp, id, 'enemy'), { ghost: true }));
-    const bt = { mode: 'pvp', seed: seed >>> 0, oppId: opp.id, oppName: opp.name, oppBot: !!opp.bot, allies: p.team.map(id => unitFromDex(p, id, 'ally')), enemies: ghost, a: 0, e: 0, turn: 0, over: false, result: null, cleaned: 0 };
+  function arenaCapacity(p, now) {
+    const day = adnOf(now);
+    if (p.arena.rankedDay !== day) { p.arena.rankedDay = day; p.arena.rankedPlayed = 0; }
+    return Math.max(0, C.RANKED_DAILY - p.arena.rankedPlayed);
+  }
+  function canArena(p, opp, now, opts) {
+    const mine = p.team.filter(id => ownedSpeciesId(p, id));
+    const theirs = opp && Array.isArray(opp.team) ? opp.team.filter(id => ownedSpeciesId(opp, id)) : [];
+    if (!mine.length || !theirs.length) return { ok: false, reason: 'team' };
+    if (p.energy < 1) return { ok: false, reason: 'energy' };
+    if (!opp.bot && opp.id === p.id) return { ok: false, reason: 'self' };
+    const ranked = !opp.bot && (!opts || opts.ranked !== false);
+    if (ranked) {
+      if (arenaCapacity(p, now) <= 0) return { ok: false, reason: 'daily' };
+      const recent = p.arenaHistory.find(h => h.ranked && h.oppId === opp.id && now - h.ts < C.ARENA_REPEAT_MS);
+      if (recent) return { ok: false, reason: 'repeat' };
+      const recentOpp = opp.arena && opp.arena.lastOppId === p.id && now - opp.arena.lastOppTs < C.ARENA_REPEAT_MS;
+      if (recentOpp) return { ok: false, reason: 'repeat' };
+    }
+    return { ok: true, ranked, mine: mine.slice(0, C.TEAM_MAX), theirs: theirs.slice(0, C.TEAM_MAX) };
+  }
+  function startArena(p, opp, seed, now, opts) {
+    const check = canArena(p, opp, now, opts); if (!check.ok) return { error: check.reason };
+    p.energy--;
+    const allies = check.mine.map(id => unitFromDex(p, id, 'ally'));
+    const ghost = check.theirs.map(id => Object.assign(unitFromDex(opp, id, 'enemy'), { ghost: true }));
+    const bt = { mode: 'pvp', seed: seed >>> 0, oppId: opp.id, oppName: opp.name, oppBot: !!opp.bot, ranked: check.ranked, oppRating: opp.arena ? opp.arena.rating : C.ARENA_START, allies, enemies: ghost, a: 0, e: 0, turn: 0, over: false, result: null, cleaned: 0 };
     bt.allies[0].used = true; return bt;
   }
   function damage(att, def, pw, type, mode, rng) {
@@ -561,17 +720,27 @@
     }
     return out;
   }
-  function elo(ra, rb, scoreA) { const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400)); return Math.round(C.ELO_K * (scoreA - ea)); }
-  function finishArena(p, opp, bt) {
-    const win = bt.result === 'win', score = win ? 1 : 0;
-    const delta = elo(p.arena.rating, opp.arena.rating, score);
-    p.arena.rating = Math.max(100, p.arena.rating + delta); if (win) p.arena.wins++; else p.arena.losses++;
+  function elo(ra, rb, scoreA, k) { const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400)); return Math.round((k || C.ELO_K) * (scoreA - ea)); }
+  function finishArena(p, opp, bt, now) {
+    const t = seqNum(now, Date.now(), 0, 8640000000000000), win = bt.result === 'win', score = win ? 1 : 0;
+    const ranked = bt.ranked === true && !opp.bot && !!opp.arena;
+    const rb = seqNum(bt.oppRating, opp.arena ? opp.arena.rating : C.ARENA_START, 100, 5000);
+    const k = p.arena.rankedPlayed < C.RANKED_PLACEMENT ? C.ELO_K * 1.5 : C.ELO_K;
+    const delta = ranked ? elo(p.arena.rating, rb, score, k) : 0;
+    if (win) p.arena.wins++; else p.arena.losses++;
     let oppDelta = 0;
-    // the defender wasn't online, so they get half the change: nobody loses much while away
-    if (!opp.bot) { oppDelta = -Math.round(delta / 2); opp.arena.rating = Math.max(100, opp.arena.rating + oppDelta); if (win) opp.arena.losses++; else opp.arena.wins++; }
+    if (ranked) {
+      p.arena.rating = Math.max(100, Math.min(5000, p.arena.rating + delta));
+      if (win) p.arena.rankedWins++; else p.arena.rankedLosses++;
+      p.arena.rankedPlayed++;
+      p.arenaHistory.push({ oppId: opp.id, adn: adnOf(t), ts: t, ranked: true });
+      oppDelta = -Math.round(delta / 2); opp.arena.rating = Math.max(100, Math.min(5000, opp.arena.rating + oppDelta));
+      opp.arena.lastOppId = p.id; opp.arena.lastOppTs = t;
+      if (win) opp.arena.losses++; else opp.arena.wins++;
+    }
     const xp = win ? 40 : 10; const levelUps = []; p.team.forEach(id => levelUps.push(...addXP(p, id, xp)));
     const scrap = win ? 15 : 5; p.scrap += scrap;
-    return { result: bt.result, delta, rating: p.arena.rating, xp, scrap, levelUps, oppDelta };
+    return { result: bt.result, ranked, delta, rating: p.arena.rating, xp, scrap, levelUps, oppDelta };
   }
 
   // ---------- bots (practice opponents, never on leaderboards) ----------
@@ -604,9 +773,10 @@
     VERSION, SAVE_V, DAY, HOUR, MIN, C, TYPES, PVP_CYCLE, TYPE_MOVE, TYPE_POWER, UTIL, ITEMS, BYO_ITEMS, RECYCLE_ITEMS, RARITY, RARITY_KEYS, SPECIES, SP, EGG_POOL, STAR_COST,
     LITTER, AREAS, mulberry32, adnOf, sgHour, sgDow, weekStart, ymdOf, clone, dhash, hamming, validHash, lowDetail, geohash, validZone, zoneNeighbors, nearZone, cellBounds, lngToX, latToY, xToLng, yToLat, metersPerPx,
     WILD_POOL, hash32, wildSlot, cellSpawn, wildNear, wildLevel, wildToday, startWild, finishWild, distanceM, bearingDeg,
-    makeName, validName, checkName, cleanName, nameKey, NAME_ERR, NAME_MIN, NAME_MAX, makeCode, NAME_A, NAME_B, newPlayer, seasonDay, claimDaily, verifiedActions, actionsToday, actionDaysAll, seasonActionDays, ecoScore,
+    makeName, validName, checkName, cleanName, nameKey, NAME_ERR, NAME_MIN, NAME_MAX, makeCode, NAME_A, NAME_B, newPlayer, sanitizePlayer, seasonDay, claimDaily, verifiedActions, actionsToday, actionDaysAll, seasonActionDays, ecoScore,
+    habitDays, habitStreak, longestStreak, habitStats, reusableStats, seasonRecap,
     addCopy, mergeCost, merge, evoStage, nextEvoStars, xpNeed, addXP, train, mileageBonus, calcStats, statsOf, power, nameOf, rollRarity, rollSpecies, effectiveOdds,
-    validateAction, doAction, logSelfReport, rinse, newSeason, setTeam, areaUnlocked, lockReason, fightList, eff, unitFromDex, startCampaign, startArena,
+    validateAction, doAction, logSelfReport, rinse, newSeason, setTeam, areaUnlocked, lockReason, fightList, eff, unitFromDex, startCampaign, arenaCapacity, canArena, startArena,
     act, replay, finishCampaign, elo, finishArena, makeBot, hhmm, icsDaily, icsWeekly
   };
 })(typeof window !== 'undefined' ? window : globalThis);

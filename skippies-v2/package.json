@@ -1,6 +1,6 @@
 {
   "name": "skippies",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "description": "SKIPPIES: a location-based collect-and-battle game where real BYO and recycling hatch eco creatures. Concept for MamaShop (SP DELTA BA0617).",
   "engines": { "node": ">=22.13.0" },
