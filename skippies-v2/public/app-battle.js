@@ -165,14 +165,8 @@
     };
     next();
   }
-  async function finish() {
-    const kind = B.kind, ai = B.bt.ai;
-    const r = await SK.call('POST', '/api/' + kind + '/finish', { ticket: B.ticket, actions: B.actions });
-    B = null;
-    if (r.status !== 200) { SK.render(); SK.toast(SK.errMsg(r, 'That battle couldn\u2019t be verified.'), 'alert'); return; }
-    const res = r.body.result, win = res.result === 'win';
-    if (kind === 'wild' && win && wildSpawn && SK.markWildDone) SK.markWildDone(wildSpawn);
-    const spawnDone = wildSpawn; wildSpawn = null;
+  SK.showBattleResult = function (kind, res, ai, done, spawn) {
+    const win = res.result === 'win', spawnDone = spawn;
     SK.dark(true); SK.vibrate(win ? [30, 50, 80] : 40);
     if (SK.audio) SK.audio.play(win ? 'win' : 'lose');
     const lv = (res.levelUps || []);
@@ -193,7 +187,21 @@
       ${!win ? '<p class="muted">Tips: merge duplicates for stars, train with scrap, use same-type attacks, and BYO more for habit mileage.</p>' : ''}
       </div><div class="flow-foot"><button class="btn btn-accent btn-block" id="cont">Continue</button></div></div>`;
     SK.announce(win ? 'Victory' : 'Battle over');
-    SK.on('cont', () => { if (kind === 'campaign' && ai != null) areaScreen(ai); else if (kind === 'wild') { SK.tab = 'radar'; SK.render(); } else { opps = null; SK.render(); } });
+    SK.on('cont', done || function () { if (kind === 'campaign' && ai != null) areaScreen(ai); else if (kind === 'wild') { SK.tab = 'radar'; SK.render(); } else { opps = null; SK.render(); } });
+  };
+  async function finish() {
+    const kind = B.kind, ai = B.bt.ai;
+    const r = await SK.call('POST', '/api/' + kind + '/finish', { ticket: B.ticket, actions: B.actions });
+    B = null;
+    if (r.status !== 200) { SK.render(); SK.toast(SK.errMsg(r, 'That battle couldn\u2019t be verified.'), 'alert'); return; }
+    if (kind === 'wild' && r.body.result.result === 'win' && wildSpawn && SK.markWildDone) SK.markWildDone(wildSpawn);
+    const spawnDone = wildSpawn; wildSpawn = null;
+    SK.showBattleResult(kind, r.body.result, ai, null, spawnDone);
   }
+  SK.devStartArena = async function (ranked) {
+    const r = await SK.call('GET', '/api/dev/opponent', { ranked: !!ranked });
+    if (r.status !== 200) return SK.toast(SK.errMsg(r, 'Could not load demo opponent.'), 'alert');
+    return startArena(r.body.opponent);
+  };
   SK._battleTest = { startCampaign, startArena, doAct, get B() { return B; }, get busy() { return busy; } };
 })(typeof window !== 'undefined' ? window : globalThis);

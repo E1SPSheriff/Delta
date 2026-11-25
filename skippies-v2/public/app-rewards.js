@@ -3,6 +3,7 @@
   'use strict';
   const SK = root.SK, doc = root.document, ic = SK.ic, esc = SK.esc, C = G.C;
   const KEY = 'mamashop_rewards';
+  function rewardKey() { return SK.dev && SK.dev.storageKey ? SK.dev.storageKey(KEY) : KEY; }
   const CATS = [
     ['Lunchboxes', 1, 'On the Go'], ['Reusable Straws', 1, 'On the Go'],
     ['Reusable Cups', 1, 'On the Go'], ['Reusable Bowls', 1, 'On the Go'],
@@ -35,7 +36,7 @@
   function fallback() { return { pts: 0, life: 0, plastic: 0, log: [], reads: { wk: '', ids: [] } }; }
   function load() {
     try {
-      const s = JSON.parse(root.localStorage.getItem(KEY));
+      const s = JSON.parse(root.localStorage.getItem(rewardKey()));
       if (!s) return fallback();
       if (!Array.isArray(s.log)) s.log = [];
       if (!s.reads || !Array.isArray(s.reads.ids)) s.reads = { wk: '', ids: [] };
@@ -45,7 +46,7 @@
       return s;
     } catch (_) { return fallback(); }
   }
-  function save(s) { try { root.localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) {} }
+  function save(s) { try { root.localStorage.setItem(rewardKey(), JSON.stringify(s)); } catch (_) {} }
   function week() {
     const d = new Date(), jan = new Date(d.getFullYear(), 0, 1);
     return d.getFullYear() + '-' + Math.floor((d - jan) / 604800000);

@@ -137,7 +137,9 @@
   SK.call = async function (method, path, body) {
     const token = SK.token();
     let r;
-    if (SK.mode === 'local') {
+    if (SK.dev && SK.dev.active) {
+      r = await SK.dev.rawCall(method, path, body);
+    } else if (SK.mode === 'local') {
       r = await getLocalApi().handle({ method, path, headers: token ? { authorization: 'Bearer ' + token } : {}, body: body || {} });
     } else {
       try {
@@ -147,7 +149,7 @@
       } catch (e) { SK.netDown = true; r = { status: 0, body: { error: 'network', message: 'You\u2019re offline. Check your connection and try again.' } }; }
     }
     if (r.body && r.body.state) SK.setState(r.body.state);
-    if (r.status === 401 && path !== '/api/register') { LS.del(K_TOKEN + SK.mode); SK.st = null; SK.boot(); }
+    if (r.status === 401 && path !== '/api/register') { if (SK.dev && SK.dev.active) SK.dev.setToken(null); else LS.del(K_TOKEN + SK.mode); SK.st = null; SK.boot(); }
     if (r.status === 429) r.body.message = 'Too many requests. Wait a moment and try again.';
     return r;
   };

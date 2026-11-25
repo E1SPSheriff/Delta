@@ -9,10 +9,10 @@ const PORT = 30000 + (process.pid % 20000);
 const DB = path.join(os.tmpdir(), 'skippies-e2e-' + process.pid + '.db');
 let fails = 0, passes = 0; const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 
-function start() {
+function start(extra) {
   if (USE_SOCKET) try { fs.unlinkSync(SOCK); } catch (e) { }
   const listenEnv = USE_SOCKET ? { SOCKET: SOCK } : { PORT: String(PORT) };
-  const p = spawn(process.execPath, ['--no-warnings', 'server/server.js'], { cwd: ROOT, env: Object.assign({}, process.env, listenEnv, { DB_FILE: DB, FETCH_DATA: '0', VAPID_SUBJECT: 'mailto:test@example.com' }) });
+  const p = spawn(process.execPath, ['--no-warnings', 'server/server.js'], { cwd: ROOT, env: Object.assign({}, process.env, listenEnv, { DB_FILE: DB, FETCH_DATA: '0', VAPID_SUBJECT: 'mailto:test@example.com', NODE_ENV: 'development' }, extra || {}) });
   let out = ''; p.stdout.on('data', d => out += d); p.stderr.on('data', d => out += d);
   return new Promise((res, rej) => { const t0 = Date.now(); (function wait() { if (/listening/.test(out)) return res({ p, log: () => out }); if (Date.now() - t0 > 8000) return rej(new Error('server did not start: ' + out)); setTimeout(wait, 50); })(); });
 }
@@ -45,7 +45,7 @@ function grid(n) { const r = G.mulberry32(500 + n); return Array.from({ length: 
   const etag = r.headers.etag; r = await req('GET', '/', undefined, { 'If-None-Match': etag });
   ok(r.status === 304, 'ETag gives 304');
   r = await req('GET', '/styles.css', undefined, { 'Accept-Encoding': 'gzip' }); ok(r.status === 200 && /text\/css/.test(r.headers['content-type']) && r.text.includes('--brand'), 'css served');
-  for (const f of ['version.js', 'engine.js', 'api.js', 'art.js', 'icons.js', 'audio.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'data/recycling-points.json', 'vendor/tfjs/tf.min.js', 'vendor/tfjs/coco-ssd.min.js', 'vendor/coco/model.json', 'vendor/coco/group1-shard1of5']) {
+  for (const f of ['version.js', 'engine.js', 'api.js', 'dev-mode.js', 'art.js', 'icons.js', 'audio.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-dev.js', 'app-social.js', 'app-rewards.js', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'data/recycling-points.json', 'vendor/tfjs/tf.min.js', 'vendor/tfjs/coco-ssd.min.js', 'vendor/coco/model.json', 'vendor/coco/group1-shard1of5']) {
     r = await req('GET', '/' + f); ok(r.status === 200, 'served ' + f);
   }
   r = await req('GET', '/config.js'); ok(r.status === 200 && r.text.includes('SKIPPIES_SERVER = location.origin'), 'config.js points the app at this server');
@@ -60,6 +60,11 @@ function grid(n) { const r = G.mulberry32(500 + n); return Array.from({ length: 
   r = await req('POST', '/api/register', { age13: false }); ok(r.status === 403, 'under-13 refused online');
   r = await req('POST', '/api/register', { age13: true }); ok(r.status === 200 && r.json.token, 'register');
   const tok = r.json.token;
+  r = await req('GET', '/api/dev/config'); ok(r.status === 200 && r.json.available === true, 'dev config reports demo available outside production');
+  r = await req('POST', '/api/demo/dev/session', { full: true }); ok(r.status === 200 && r.json.token && r.json.state.demo === true, 'demo session is isolated from the real store');
+  const demoTok = r.json.token;
+  r = await req('POST', '/api/demo/dev/battle', { kind: 'arena', ranked: true, result: 'win' }, auth(demoTok)); ok(r.status === 200 && r.json.detail && r.json.state.demo === true, 'demo ranked battle resolves in demo store');
+  r = await req('GET', '/api/leaderboard?board=eco&scope=global', undefined, auth(tok)); ok(r.status === 200 && r.json.total === 1, 'demo ranked battle did not change the real leaderboard');
   r = await req('GET', '/api/state'); ok(r.status === 401, 'no token = 401');
   r = await req('POST', '/api/action', { item: 'cup', hash: G.dhash(grid(1)), detected: ['cup'] }, auth(tok));
   ok(r.status === 200 && r.json.result.hatched.length >= 1, 'hatch over HTTP: ' + (r.json && r.json.result && r.json.result.hatched[0].id));
@@ -83,7 +88,9 @@ function grid(n) { const r = G.mulberry32(500 + n); return Array.from({ length: 
 
   // ---- restart: data persists in SQLite ----
   srv.p.kill('SIGTERM'); await new Promise(res => srv.p.on('exit', res));
-  srv = await start();
+  srv = await start({ NODE_ENV: 'production' });
+  r = await req('GET', '/api/dev/config'); ok(r.status === 200 && r.json.available === true, 'DEV MODE stays available in production');
+  r = await req('POST', '/api/demo/dev/session', {}); ok(r.status === 200 && r.json.token, 'production accepts developer API actions');
   r = await req('GET', '/api/state', undefined, auth(tok)); ok(r.status === 200 && Object.keys(r.json.state.dex).length >= 1 && r.json.state.tutorialDone === true, 'progress survived a restart');
   r = await req('GET', '/api/push/key'); ok(r.json.publicKey === vapidKey, 'VAPID key stable across restarts');
   // ---- delete ----

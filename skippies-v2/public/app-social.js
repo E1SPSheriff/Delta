@@ -85,6 +85,8 @@
         <button class="row" id="ics1"><span class="lead">${ic('calendar', 20)}</span><span class="grow"><span class="title">Add BYO reminder to calendar</span><br><span class="meta">Works on every phone</span></span>${ic('next', 20)}</button>
         <button class="row" id="ics2"><span class="lead">${ic('calendar', 20)}</span><span class="grow"><span class="title">Add recycling reminder to calendar</span><br><span class="meta">Weekly</span></span>${ic('next', 20)}</button>
       </div>
+      ${SK.dev && (SK.dev.available || SK.dev.active) ? `<div class="section-head mt24"><span class="label">Developer</span></div>
+      <div class="group"><button class="row" id="devmode"><span class="lead">${ic('settings', 20)}</span><span class="grow"><span class="title">DEV MODE</span><br><span class="meta">${SK.dev.active ? 'Demo player active' : 'Simulation tools for presentations'}</span></span><span class="badge ${SK.dev.active ? 'demo-on' : ''}">${SK.dev.active ? 'On' : 'Off'}</span></button></div>` : ''}
       <div class="section-head mt24"><span class="label">About</span></div>
       <div class="group">
         <button class="row" id="hows"><span class="lead">${ic('camera', 20)}</span><span class="grow title">How scans work</span>${ic('next', 20)}</button>
@@ -123,6 +125,14 @@
     sh.querySelector('#ics2').onclick = () => SK.download('skippies-recycling-reminder.ics', G.icsWeekly(SK.st.reminders.recycleDow, SK.st.reminders.recycleTime, 'Skippies: recycling day', SK.now()), 'text/calendar');
     sh.querySelector('#hows').onclick = () => { close(); SK.howScans(); };
     sh.querySelector('#oddsl').onclick = () => { close(); SK.oddsSheet(); };
+    const devRow = sh.querySelector('#devmode');
+    if (devRow) devRow.onclick = async () => {
+      close();
+      if (SK.dev.active) { await SK.dev.exit(); return; }
+      await SK.dev.checkAvailability();
+      if (!SK.dev.available) { SK.toast('DEV MODE is off on this server. Ask for a dedicated DEMO deployment.', 'lock'); SK.settings(); return; }
+      await SK.dev.enter();
+    };
     sh.querySelector('#privacy').onclick = () => { close(); SK.sheet('Privacy', local ? '<div class="stack"><p>Offline mode: everything is stored only on this device. Nothing is sent to a server.</p><p>The street map is off in offline mode. If you turn it on (Map, Nearby), map images load from OneMap (Singapore Land Authority), which sees which area you look at. Your location itself stays on this phone.</p><p>Deleting your game data removes it from this device.</p></div>'
       : `<div class="stack"><p><b>What we store:</b> your player name (one you typed, checked by a word filter, or a random one we made), your game progress, photo fingerprints (16-character codes, not photos), and your rough area only if you set one.</p>
         <p><b>What we never collect:</b> your real name, email, phone number, exact location or photos. There is no chat.</p>

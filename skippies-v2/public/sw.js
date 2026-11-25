@@ -1,7 +1,7 @@
 /* SKIPPIES service worker: offline app shell, cached scanner model, push reminders. Bump VERSION each release. */
 importScripts('./version.js');
 const VERSION = 'skippies-v' + self.SKIPPIES_RELEASE;
-const SHELL = ['./', './index.html', './styles.css', './version.js', './engine.js', './api.js', './art.js', './icons.js', './audio.js', './app-core.js', './app-home.js', './app-dex.js', './app-battle.js', './app-map.js', './app-social.js', './app-rewards.js', './logos/mamashop-rewards-icon.png', './logos/mamashop-rewards-icon.svg', './logos/mamashop-rewards-logo.png', './logos/mamashop-rewards-logo.svg', './logos/skippies-icon.png', './logos/skippies-icon.svg', './logos/skippies-logo.png', './logos/skippies-logo.svg', './manifest.webmanifest', './data/recycling-points.json',
+const SHELL = ['./', './index.html', './styles.css', './version.js', './engine.js', './api.js', './dev-mode.js', './art.js', './icons.js', './audio.js', './app-core.js', './app-home.js', './app-dex.js', './app-battle.js', './app-map.js', './app-dev.js', './app-social.js', './app-rewards.js', './logos/mamashop-rewards-icon.png', './logos/mamashop-rewards-icon.svg', './logos/mamashop-rewards-logo.png', './logos/mamashop-rewards-logo.svg', './logos/skippies-icon.png', './logos/skippies-icon.svg', './logos/skippies-logo.png', './logos/skippies-logo.svg', './manifest.webmanifest', './data/recycling-points.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
   './vendor/tfjs/tf.min.js', './vendor/tfjs/coco-ssd.min.js', './vendor/coco/model.json',
   './vendor/coco/group1-shard1of5', './vendor/coco/group1-shard2of5', './vendor/coco/group1-shard3of5', './vendor/coco/group1-shard4of5', './vendor/coco/group1-shard5of5'];

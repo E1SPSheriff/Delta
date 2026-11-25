@@ -7,6 +7,7 @@ const recyclingData = require('./tools/fetch-recycling-data.js');
 require('../public/engine.js');
 const { createApi } = require('../public/api.js');
 const { createSqliteStore } = require('./store-sqlite.js');
+const { createDemoRuntime, isEnabled: demoEnabled } = require('./demo.js');
 const webpush = require('./webpush.js');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -17,8 +18,8 @@ const SECURITY = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' data: blob: https://www.onemap.gov.sg; img-src 'self' data: blob: https://www.onemap.gov.sg; style-src 'self' 'unsafe-inline'; media-src 'self' blob: mediastream:; worker-src 'self' blob:; frame-ancestors 'none'"
 };
 
-const LIMITS = { default: 120, action: 20, register: 10, arena: 30, capture: 30, rewards: 20, name: 20 };
-function makeHandler({ api, vapid, allowOrigin, rateLimit, trustedProxies }) {
+const LIMITS = { default: 120, demo: 180, action: 20, register: 10, arena: 30, capture: 30, rewards: 20, name: 20 };
+function makeHandler({ api, vapid, allowOrigin, rateLimit, trustedProxies, demo }) {
   const hits = new Map(), limit = rateLimit || LIMITS.default;
   const trusted = Array.isArray(trustedProxies) ? trustedProxies : [];
   const cleanIp = s => typeof s === 'string' && /^[0-9a-fA-F:.]{1,45}$/.test(s) ? s.replace(/^::ffff:/, '') : null;
@@ -33,6 +34,7 @@ function makeHandler({ api, vapid, allowOrigin, rateLimit, trustedProxies }) {
     return chain[chain.length - 1] || socketIp;
   }
   function bucketFor(method, path) {
+    if (path.startsWith('/api/demo/') || path === '/api/dev/config') return 'demo';
     if (path === '/api/register') return 'register';
     if (path === '/api/action' || path === '/api/selfreport') return 'action';
     if (path.startsWith('/api/arena')) return 'arena';
@@ -60,6 +62,7 @@ function makeHandler({ api, vapid, allowOrigin, rateLimit, trustedProxies }) {
       const ip = clientIp(req);
       if (limited(ip, bucketFor((req.method || 'GET').toUpperCase(), p))) return send(res, 429, { error: 'rate', message: 'Too many requests. Try again in a minute.' }, Object.assign({}, cors, { 'Retry-After': '60' }));
       if (p === '/api/push/key' && req.method === 'GET') return send(res, 200, { publicKey: vapid ? vapid.publicKey : null }, cors);
+      if (p === '/api/dev/config' && req.method === 'GET') return send(res, 200, { available: true, version: G.VERSION }, cors);
       let size = 0, tooLarge = false; const chunks = [];
       req.on('data', c => {
         if (tooLarge) return;
@@ -70,7 +73,8 @@ function makeHandler({ api, vapid, allowOrigin, rateLimit, trustedProxies }) {
       req.on('end', async () => {
         if (tooLarge || res.writableEnded) return;
         try {
-          const r = await api.handle({ method: req.method, path: url, headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
+          const handler = p.startsWith('/api/demo/') ? demo.handle : api.handle;
+          const r = await handler({ method: req.method, path: url, headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
           send(res, r.status, r.body, cors);
         } catch (e) {
           console.error('[http]', e);
@@ -123,11 +127,13 @@ async function main() {
     onError: e => console.error('[api]', e)
   });
   const vapid = await loadVapid(store), subject = process.env.VAPID_SUBJECT || 'mailto:skippies@example.com';
+  const demo = createDemoRuntime(process.env);
+  if (demo.enabled) console.log('[dev] DEMO MODE enabled: isolated in-memory demo state');
   if (!process.env.VAPID_SUBJECT) console.warn('[push] Set VAPID_SUBJECT=mailto:your-team@email so push services (especially Apple) accept reminders.');
   const trustedProxies = process.env.TRUST_PROXY === '1'
     ? (process.env.TRUSTED_PROXIES || '127.0.0.1,::1,::ffff:127.0.0.1').split(',').map(s => s.trim()).filter(Boolean)
     : [];
-  const server = http.createServer(makeHandler({ api, vapid, allowOrigin: process.env.ALLOW_ORIGIN, trustedProxies }));
+  const server = http.createServer(makeHandler({ api, vapid, allowOrigin: process.env.ALLOW_ORIGIN, trustedProxies, demo }));
   const where = process.env.SOCKET || (+process.env.PORT || 8080);
   server.listen(where, () => console.log(`SKIPPIES v${G.VERSION} listening on ${typeof where === 'string' ? where : 'http://localhost:' + where}`));
   // Recycling map data: download automatically if missing or older than 30 days (needs internet on the server).
@@ -144,4 +150,4 @@ async function main() {
   }, 60000);
 }
 if (require.main === module) main();
-module.exports = { makeHandler, loadVapid };
+module.exports = { makeHandler, loadVapid, isEnabled: demoEnabled };

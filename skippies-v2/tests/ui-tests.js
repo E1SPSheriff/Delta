@@ -60,7 +60,7 @@ Object.defineProperty(globalThis, 'navigator', { value: { geolocation: { getCurr
 if (!globalThis.crypto) globalThis.crypto = nodeCrypto.webcrypto;
 
 // ---------- server (online mode): the real API with a memory store, behind a fake fetch ----------
-let serverApi = null;
+let serverApi = null, demoRuntime = null;
 const sha = async s => nodeCrypto.createHash('sha256').update(s).digest('hex');
 const rhex = n => nodeCrypto.randomBytes(n).toString('hex');
 function loadScript(f) { vm.runInThisContext(fs.readFileSync(path.join(PUB, f), 'utf8'), { filename: f }); }
@@ -72,7 +72,12 @@ global.fetch = async (url, opts) => {
   if (!serverApi) throw new Error('offline');
   const u = url.replace('https://x.test', '');
   if (u === '/api/push/key') return { status: 200, json: async () => ({ publicKey: null }) };
+  if (u === '/api/dev/config') return { status: 200, json: async () => ({ available: true }) };
   const h = opts.headers || {};
+  if (u.startsWith('/api/demo/')) {
+    const r = await demoRuntime.handle({ method: opts.method || 'GET', path: u, headers: { authorization: h.Authorization || h.authorization }, body: opts.body });
+    return { status: r.status, json: async () => JSON.parse(JSON.stringify(r.body)) };
+  }
   const r = await serverApi.handle({ method: opts.method || 'GET', path: u, headers: { authorization: h.Authorization }, body: opts.body });
   return { status: r.status, json: async () => JSON.parse(JSON.stringify(r.body)) };
 };
@@ -110,9 +115,13 @@ async function playBattle(maxTurns) {
 }
 
 (async () => {
-  for (const f of ['config.js', 'art.js', 'icons.js', 'audio.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-social.js', 'app-rewards.js']) {
+  for (const f of ['config.js', 'art.js', 'icons.js', 'audio.js', 'dev-mode.js', 'app-core.js', 'app-home.js', 'app-dex.js', 'app-battle.js', 'app-map.js', 'app-dev.js', 'app-social.js', 'app-rewards.js']) {
     if (f === 'config.js' && MODE === 'online') continue; // server serves its own config.js
     loadScript(f);
+  }
+  if (MODE === 'online') {
+    const store = SkippiesAPI.createMemoryStore();
+    demoRuntime = DevMode.createRuntime({ store, api: SkippiesAPI.createApi(store, { mode: 'demo', randomHex: rhex, sha256: sha, rng: Math.random }), randomHex: rhex, sha256: sha, rng: Math.random });
   }
   await flush();
 
@@ -443,6 +452,22 @@ async function playBattle(maxTurns) {
   // ---------- season end ----------
   T += 15 * G.DAY; await SK.call('GET', '/api/state'); SK.render();
   ok(!!$('newseason'), 'season over prompt'); await click($('newseason'), 'new season'); ok(SK.st.season === 2 && !SK.st.rewardCode, 'season 2 started, reward reset');
+
+  // ---------- dev mode ----------
+  const realName = SK.st.name;
+  await SK.dev.checkAvailability(); await flush();
+  await click($('settings'), 'settings');
+  ok(!!$('devmode'), 'settings exposes DEV MODE');
+  await click($('devmode'), 'dev mode row'); await flush();
+  ok(SK.dev.active && SK.st.id.indexOf('demo-') === 0, 'DEV MODE enters an isolated demo player');
+  ok(txt().includes('DEV MODE') && txt().includes('Simulation data. Not legitimate player progress.'), 'persistent demo indicator visible');
+  await click(sel('[data-dev="full"]'), 'unlock full demo');
+  ok(Object.keys(SK.st.dex).length >= 5, 'full demo unlocks representative species');
+  await click(sel('[data-dev="presentation"]'), 'presentation mode');
+  ok(txt().includes('Presentation mode') && txt().includes('Reusable identity') && txt().includes('Season Recap'), 'presentation menu shown');
+  await click($('devp-panel'), 'dev panel');
+  await click(sel('[data-dev="exit"]'), 'restore real player'); await flush();
+  ok(!SK.dev.active && SK.st.name === realName, 'exiting DEV MODE restores the real player');
 
   // ---------- delete ----------
   await click($('settings'), 'settings'); await click($('del'), 'delete'); await flush();

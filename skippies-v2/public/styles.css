@@ -387,3 +387,21 @@ button.mk{appearance:none;border:0;background:none;padding:0;font:inherit;cursor
 .name-sugg{display:flex;align-items:center;justify-content:space-between;margin-top:20px}
 .name-chips{flex-wrap:wrap;overflow:visible;margin:0;padding:4px 0}
 .name-chips .chip:disabled{opacity:.5}
+.dev-badge{position:fixed;left:50%;bottom:calc(var(--tabbar) + var(--sab) + 8px);transform:translateX(-50%);z-index:80;max-width:calc(100vw - 32px);padding:6px 12px;border:1.5px solid var(--accent);border-radius:999px;background:var(--dark);box-shadow:var(--e2);color:var(--dark-text);text-align:center;pointer-events:none;font-size:11px;line-height:14px;letter-spacing:.08em;text-transform:uppercase}
+.dev-badge b{display:block;font-size:11px;line-height:14px;color:var(--accent)}
+.dev-badge span{display:block;font-size:9px;line-height:12px;letter-spacing:.02em;text-transform:none;color:var(--dark-muted)}
+.dev-flow-body{gap:12px;padding-bottom:20px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.dev-warning{display:flex;align-items:flex-start;gap:10px;width:100%;padding:12px 14px;border:1.5px solid var(--warn-ink);border-radius:var(--r-md);background:var(--warn-bg);color:var(--warn-ink);text-align:left;font-size:13px;line-height:18px}
+.dev-status{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;flex-wrap:wrap}
+.dev-status .caption{max-width:240px;text-align:right}
+.badge.demo-on{background:var(--accent-tint);color:var(--accent-ink);border:1px solid var(--accent)}
+.dev-card{width:100%;padding:14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);box-shadow:var(--e1);text-align:left}
+.dev-card .section-head{margin-bottom:12px}
+.dev-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px}
+.dev-grid .btn{width:100%;min-height:38px;padding:8px 10px;font-size:13px;line-height:18px}
+.btn-danger{background:var(--danger-tint);color:var(--danger-ink);border-color:var(--danger-tint)}
+.dev-preview{width:100%;text-align:left}
+.dev-preview .art{display:flex;justify-content:center;margin:12px 0}
+.skel{border-radius:var(--r-sm);background:linear-gradient(90deg,var(--sunken),var(--surface),var(--sunken));background-size:200% 100%;animation:dev-skel 1.2s ease-in-out infinite}
+@keyframes dev-skel{0%{background-position:100% 0}100%{background-position:-100% 0}}
+@media (min-width:520px){.dev-flow-body{max-width:520px;margin:0 auto}}

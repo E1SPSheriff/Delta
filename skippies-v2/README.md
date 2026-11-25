@@ -86,6 +86,7 @@ Environment variables:
 - `DB_FILE` (SQLite path; use a **persistent disk** in production)
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (`mailto:`). Keys are auto-generated and stored in the DB if missing.
 - `ALLOW_ORIGIN` (only if the frontend is hosted elsewhere)
+- DEV MODE is always available in the game; no environment variable is needed.
 
 ## Deploy (about 10 minutes)
 HTTPS is required for the camera, location, push notifications and "Add to Home Screen". These hosts give you HTTPS automatically.
@@ -101,6 +102,23 @@ HTTPS is required for the camera, location, push notifications and "Add to Home 
 Important: without a persistent disk the database is wiped on every redeploy. Keep the same VAPID keys (they're stored in the database) or existing push subscriptions stop working.
 
 **Offline/demo:** open `public/index.html` from any static host, or use the single-file build. With no server configured (`public/config.js`), the whole game runs on the device.
+
+## DEV MODE / presentations
+
+DEV MODE is a temporary simulation for showing the product. It uses a separate in-memory demo store and a separate browser token. It never writes to real progress, ranked Elo, leaderboards or MamaShop claims.
+
+Use:
+1. Run `npm start` (or open the static build) and choose an age/player as usual.
+2. Open **Settings → DEV MODE → Off**.
+3. Use **Unlock full demo** or **Presentation mode**. The `DEV MODE` indicator stays visible while the demo player is active.
+4. Use **Restore real player** to return to the real save.
+
+Optional isolated Render DEMO deployment:
+1. Create a second Render Blueprint from this repo, with a different service name and its own disk.
+2. Deploy and open the DEMO URL. **Settings → DEV MODE** is available on every deployment, so this is only for separate demo data.
+3. Keep the DEMO URL out of the public QR code; use the production URL for real players.
+
+Limitations: demo state lives in server memory, so a server restart clears it. Refreshing while a demo session is active restores a fresh demo session if the old one is gone. Local DEV MODE uses an in-memory bridge and clears when the page is reloaded. Demo claims are labelled `DEMO MamaShop sticker` and cannot become real claims.
 
 ## Design system
 "Void-deck field guide":
